@@ -38,6 +38,12 @@ source .venv/bin/activate
 memex --version
 ```
 
+**Use this repo’s package, not a global `memex`.** If you ever ran `uv tool install memex` (or `pipx install memex`), your shell may pick `~/.local/bin/memex` first — that is a **separate** environment from `.venv/` and will not match this checkout. While working in the clone:
+
+- Prefer **`source .venv/bin/activate`** then `memex …`, or **`uv run memex …`** from the repo root (uses the project env / lockfile).
+- Cursor/VS Code: open the folder as a workspace; **`.vscode/settings.json`** pins the interpreter to `.venv/bin/python` and activates it in new integrated terminals.
+- To remove the shadowing tool: `uv tool uninstall memex` (optional).
+
 The installer is idempotent and safe to rerun. It picks `uv` when available
 (10-100x faster than pip) and falls back to `python3 -m venv + pip`. Flags:
 
@@ -53,6 +59,15 @@ The installer is idempotent and safe to rerun. It picks `uv` when available
 | `--quiet`             | print only PASS/FAIL |
 
 Run `bash scripts/install.sh --help` for the full reference.
+
+**`mem search` / mem0 import crashes** (`ModuleNotFoundError: PreTrainedModel` or `AttributeError: module 'sys' has no attribute 'get_int_max_str_digits'`): your `.venv` was likely created with a **pre-release CPython** (e.g. `3.11.0rc1`). PyTorch 2.12’s dynamo layer needs `sys.get_int_max_str_digits` (present only in **3.11.0 final+**). Fix: install a release interpreter and recreate the venv, for example:
+
+```bash
+uv python install 3.11
+rm -rf .venv
+bash scripts/install.sh --uv --python 3.11
+# or: UV_PYTHON=3.11 uv sync && uv run memex mem search test
+```
 
 ### From source — manual
 

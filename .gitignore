@@ -30,7 +30,11 @@ htmlcov/
 coverage.xml
 
 # --- IDE / editor / OS ---------------------------------------------------
-.vscode/
+# Keep a minimal committed VS Code / Cursor workspace so the interpreter and
+# integrated terminal default to ./.venv (editable memex from this repo).
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
