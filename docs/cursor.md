@@ -39,21 +39,21 @@ In one picture:
                   +------+------+                 |
                          |                        |
                          v                        v
-                       memex client / memex (shell)
+                       memex client (HTTP)
                                   |
                                   v
-                       memex root (~/memex)
+                       memex server (memex serve / docker)
                                   ^
                                   |
-                  +---------------+---------------+
-                  |  Project rule B               |
-                  |  loaded into main agent's     |
-                  |  system prompt; reminds it    |
-                  |  to call `memex doc search`   |
-                  |  / `memex mem search` when    |
-                  |  the user asks knowledge-     |
-                  |  shaped questions             |
-                  +-------------------------------+
+                  +---------------+----------------------+
+                  |  Project rule B                       |
+                  |  loaded into main agent's             |
+                  |  system prompt; reminds it            |
+                  |  to call `memex client doc search`    |
+                  |  / `memex client mem search` when     |
+                  |  the user asks knowledge-shaped       |
+                  |  questions                            |
+                  +---------------------------------------+
 ```
 
 ## Pick what you need
@@ -84,23 +84,26 @@ memex cursor install-hooks                       # default target ~/.cursor/hook
 memex cursor install-hooks --target ./project-hooks.json
 ```
 
-What it wires up:
+What it wires up (every command goes through `memex client` so the same hooks work whether memex is local or in a Docker container):
 
 ```
 +--------------------------+--------------------------------------------------+
 | lifecycle event          | command                                          |
 +--------------------------+--------------------------------------------------+
-| sessionStart             | memex mem profile --write /tmp/cursor-kb-profile.md
-| beforeSubmitPrompt       | memex ctx "$CURSOR_USER_PROMPT" \                |
-|                          |   --write /tmp/cursor-kb-ctx.md --budget 2000    |
-| sessionEnd               | memex mem learn --from-cursor-transcript         |
-|                          |   --category learning                            |
+| sessionStart             | memex client mem profile                         |
+|                          |   --write /tmp/cursor-memex-profile.md           |
+| beforeSubmitPrompt       | memex client ctx "$CURSOR_USER_PROMPT" \         |
+|                          |   --write /tmp/cursor-memex-ctx.md --budget 2000 |
 +--------------------------+--------------------------------------------------+
 ```
 
-The hook output (`/tmp/cursor-kb-ctx.md`) is the `<!-- BEGIN memex-context -->` block; Cursor inlines it into the prompt the LLM sees, so you never have to ask "do you remember…?".
+The hook output (`/tmp/cursor-memex-ctx.md`) is the `<!-- BEGIN memex-context -->` block; Cursor inlines it into the prompt the LLM sees, so you never have to ask "do you remember…?".
 
-Cost: one `memex ctx` call per user prompt. With the offline embedder + ChromaDB the round-trip is ~500 ms; with OpenAI it adds whatever the embeddings API takes.
+`memex client` reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and `MEMEX_API_TOKEN` from the environment. Set those in your shell rc (or `.envrc`) once and every hook / subagent inherits them.
+
+> **Note:** the previous template also ran `memex mem learn --from-cursor-transcript` on `sessionEnd`. That command reads the transcript file on the local disk and has **no HTTP equivalent**, so it is no longer in the default template — it would break against a Docker-deployed memex. If you run memex locally and want it back, add the entry manually to `~/.cursor/hooks.json`.
+
+Cost: one `memex client ctx` call per user prompt. With the offline embedder + ChromaDB the round-trip is ~500 ms; with OpenAI it adds whatever the embeddings API takes.
 
 To disable, delete the entries from `~/.cursor/hooks.json` or `memex cursor install-hooks --replace --force` and write a different file.
 
@@ -117,9 +120,9 @@ memex cursor install-rule .                      # writes .cursor/rules/memex.md
 The slimmed `memex.mdc` covers exactly two things for the main agent:
 
 1. How to read the auto-injected `<!-- BEGIN memex-context -->` block (use it directly; don't re-query).
-2. When to manually shell out for a quick read-only lookup (`memex doc search`, `memex mem search`).
+2. When to manually shell out for a quick read-only lookup (`memex client doc search`, `memex client mem search`).
 
-All write/maintenance operations are intentionally **delegated to the subagents** below — the main thread's rule explicitly tells the agent to NOT run `memex doc add`, `memex mem add`, `memex doc rm`, etc.
+All write/maintenance operations are intentionally **delegated to the subagents** below — the main thread's rule explicitly tells the agent to NOT run `memex client doc add`, `memex client mem add`, `memex client doc rm`, etc.
 
 Why bother if you already have hooks? Because hooks fire automatically with a single fixed budget; sometimes the agent needs a follow-up query (different angle, narrower tag filter). The rule licenses that.
 
@@ -158,7 +161,7 @@ Invoke from chat:
 /memex-curator   Check for stale or contradictory prefs.
 ```
 
-Each subagent runs in its **own Cursor context window**, with **its own system prompt** (see [`../templates/agents/`](../templates/agents/)) and (for `kb-ask`) `readonly: true` so it can't accidentally write. They use the shell tool to invoke `memex` and report results back to the main thread.
+Each subagent runs in its **own Cursor context window**, with **its own system prompt** (see [`../templates/agents/`](../templates/agents/)) and (for `memex-ask`) `readonly: true` so it can't accidentally write. They use the shell tool to invoke `memex client` (the HTTP CLI; works against a local or Docker-deployed memex) and report results back to the main thread.
 
 ### Subagent file format
 
@@ -181,31 +184,25 @@ Cursor docs (as of writing) cover these five fields only — there's no per-suba
 
 ---
 
-## Routing from a Docker / remote deployment
+## Pointing the hooks / agents at the right server
 
-If your memex lives in Docker on another machine (or on the same machine but behind a token), the hooks and subagents still work — they just need to be told to use `memex client` instead of the local CLI:
+`memex client` (used by every shipped hook and subagent) resolves the server like this:
+
+1. `--url URL` / `-u URL` and `--token TOKEN` (CLI flags) — useful for one-offs.
+2. `MEMEX_API_URL` and `MEMEX_API_TOKEN` (env vars) — recommended for hooks/subagents, set once in your shell rc.
+3. Defaults: `http://127.0.0.1:8000` and no token.
 
 ```bash
-# in your shell rc, or in .envrc for direnv users:
+# in ~/.bashrc / ~/.zshrc, or a project .envrc for direnv users:
 export MEMEX_API_URL=http://memex.local:8000
 export MEMEX_API_TOKEN=$(pass show memex/api-token)
-
-# easiest: alias memex to memex client for the agents
-alias memex='memex client'
 ```
 
-Or edit each `~/.cursor/agents/memex-*.md` to prefix all command invocations with `client`. Or use the explicit form in the hooks file:
+If you need a per-subagent override (e.g. a curator that talks to a staging memex), edit `~/.cursor/agents/memex-curator.md` and pass `--url` / `--token` explicitly inside its commands.
 
-```json
-{
-  "hooks": {
-    "beforeSubmitPrompt": [
-      { "name": "memex-ctx",
-        "command": "memex client ctx \"$CURSOR_USER_PROMPT\" --write /tmp/cursor-kb-ctx.md --budget 2000" }
-    ]
-  }
-}
-```
+### Going back to a pure-local CLI
+
+If you run memex **only** as a local process and don't want the HTTP hop, replace `memex client` with `memex` everywhere in `~/.cursor/hooks.json` and `~/.cursor/agents/memex-*.md`. The local-only commands that have no HTTP form (`memex mem learn --from-cursor-transcript`, `memex doc graph`, `memex mem update`) become available again.
 
 ---
 

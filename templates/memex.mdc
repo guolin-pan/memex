@@ -1,37 +1,43 @@
 ---
-description: Use the local `memex` CLI for personal-assistant context and knowledge-base reads.
+description: Use the `memex client` HTTP CLI for personal-assistant context and knowledge-base reads against the remote memex server.
 alwaysApply: true
 ---
 
 # memex (knowledge base) usage — main-thread rule
 
-The user has a personal knowledge base behind the `memex` shell command, with two
-backends:
+The user has a personal knowledge base behind the `memex` server. Day-to-day
+access is via the `memex client` HTTP CLI, which talks to that server.
 
-- **mem0** (`memex mem ...`) — short personal facts: preferences, identity, ongoing
-  projects, decisions, learnings.
-- **wiki** (`memex doc ...`) — markdown documents (RAG-style).
+Server selection (precedence: CLI flag > env > default):
+- `--url URL` / `-u URL`  or  env `MEMEX_API_URL`  (default `http://127.0.0.1:8000`)
+- `--token TOKEN`         or  env `MEMEX_API_TOKEN`  (required when the server sets it)
+
+Two backends, addressed through the client:
+
+- **mem0** (`memex client mem ...`) — short personal facts: preferences, identity,
+  ongoing projects, decisions, learnings.
+- **wiki** (`memex client doc ...`) — markdown documents (RAG-style).
 
 There are three specialised subagents that own most of the work. **Prefer
 delegating to them over doing memex work in the main thread**, because they have
 focused prompts and (where relevant) read-only enforcement:
 
-| Subagent       | Use when…                                                       |
-|----------------|-----------------------------------------------------------------|
+| Subagent          | Use when…                                                       |
+|-------------------|-----------------------------------------------------------------|
 | `/memex-ask`      | the user asks a question that's likely answered by their notes  |
 | `/memex-archive`  | the user wants to save / archive / "remember this"              |
-| `/memex-curator`  | the user wants to clean, audit, dedupe, or fix the memex           |
+| `/memex-curator`  | the user wants to clean, audit, dedupe, or fix the memex        |
 
 ## What the main thread should still do
 
 1. **Use pre-injected context.** When a `<!-- BEGIN memex-context -->` block is
-   present earlier in the conversation (planted by the `memex ctx` hook), trust
-   it and use it directly — do not re-query.
+   present earlier in the conversation (planted by the `memex client ctx` hook),
+   trust it and use it directly — do not re-query.
 
 2. **Light read-only lookups.** For a single quick fact you'd otherwise
    interrupt your flow to ask, it's fine to shell-out:
-   - `memex doc search "<focused query>" -k 3`
-   - `memex mem search "<focused query>" -k 3`
+   - `memex client doc search "<focused query>" -k 3`
+   - `memex client mem search "<focused query>" -k 3`
    Cite the doc title/path you used.
 
 3. **Route, don't write.** If the user clearly wants to save, update, delete,
@@ -42,7 +48,8 @@ focused prompts and (where relevant) read-only enforcement:
 
 ## What the main thread should NOT do
 
-- Don't run `memex doc add`, `memex mem add`, `memex doc rm`, `memex mem rm`, `memex mem update`, `memex doc reindex`, or `memex mem rm all` from the main thread. Use the subagents so the user gets dedup checks, previews, and confirmation prompts.
+- Don't run `memex client doc add`, `memex client mem add`, `memex client doc rm`, `memex client mem rm`, or `memex client doc reindex` from the main thread. Use the subagents so the user gets dedup checks, previews, and confirmation prompts.
 - Don't dump every memory or every search hit. Summarize.
 - Don't fall back to general world knowledge for personal/project questions
   when the memex is empty — say "the memex has no information on this".
+- Don't try to call local-only commands (`memex init`, `memex watch`, `memex backup`, `memex restore`, `memex serve`, `memex cursor *`). They have no remote equivalent and are not part of the `memex client` surface.

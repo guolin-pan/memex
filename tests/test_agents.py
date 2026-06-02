@@ -213,12 +213,22 @@ def test_kb_mdc_rule_delegates_writes_to_subagents():
     assert "/memex-archive" in rule
     assert "/memex-curator" in rule
     assert "memex-context" in rule  # uses pre-injected ctx
-    assert "memex doc search" in rule
-    assert "memex mem search" in rule
+    # All KB access goes through the `memex client` HTTP CLI (so the rule works
+    # against a Docker-deployed memex out of the box).
+    assert "memex client doc search" in rule
+    assert "memex client mem search" in rule
+    assert "MEMEX_API_URL" in rule
 
-    # Must NOT prescribe writes from the main thread anymore (those moved to
-    # the memex-archive / memex-curator agents).
-    forbidden = ["memex doc add", "memex mem add", "memex doc rm", "memex mem rm", "memex mem update"]
+    # Must NOT prescribe writes from the main thread (those moved to the
+    # memex-archive / memex-curator agents). Names are checked in the client
+    # form, which is what the rule advertises now.
+    forbidden = [
+        "memex client doc add",
+        "memex client mem add",
+        "memex client doc rm",
+        "memex client mem rm",
+        "memex client doc reindex",
+    ]
     for token in forbidden:
         # Allowed only inside an explicit "don't" / negative context.
         # Cheap heuristic: count occurrences and require they all sit after a

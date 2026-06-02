@@ -335,6 +335,23 @@ def doc_rm(
     console.print(f"[green]✓[/green] removed {data['id']}")
 
 
+@doc_app.command("reindex")
+def doc_reindex(
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help="Force reindex of every doc (default: only changed ones).",
+    ),
+):
+    """Reindex the remote wiki (changed docs by default; --all for a full rebuild)."""
+    with _http() as c:
+        r = c.post("/doc/reindex", params={"all": all_})
+        if r.status_code != 200:
+            _die(r)
+        data = r.json()
+    console.print(f"[green]✓[/green] reindex ok  [dim]{data}[/dim]")
+
+
 # ---------------------------------------------------------------------------
 # mem subcommands
 # ---------------------------------------------------------------------------
