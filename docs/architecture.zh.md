@@ -228,7 +228,7 @@ query
 | 默认单 uvicorn worker | 无 worker 间 qdrant 争抢 | 并发受限；需要时多起几个实例+负载均衡 |
 | Shell hooks，不上 MCP | 更简单、更快、可调试 | LLM 不能 tool-discover；要靠 Cursor rule 列命令 |
 | `mem add` 默认逐字 | 可预测、快、无需 LLM | 用户把杂乱文本扔 `mem add` 会得到一坨大记忆；我们用 `--infer`/`mem learn` 文档来补偿 |
-| Docker 镜像烤进 ChromaDB ONNX | 容器开箱即用、离线就绪 | 镜像 ~1.1 GB；提供 `WITH_LOCAL_MODELS=0` 瘦身版 |
+| Docker 镜像烤进所有运行时模型 | 容器开箱即用、完全离线、启动不联网 | 镜像 ~1.5-2 GB；不再提供瘦身版（明确选择以可靠性换体积） |
 | 两层记忆（mem0 + Chroma） | 各司其职 | 内部稍复杂；用户只看一个 CLI |
 | frontmatter-id，不用路径作 id | 文件可任意改名/移动 | 每个文件都得有 frontmatter；不能直接指向已有 wiki |
 | ULID，不用 UUID | 按时间排序、更短、URL 友好 | 没 UUID 通用；UUID 周边工具更多 |

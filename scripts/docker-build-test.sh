@@ -17,10 +17,12 @@
 #   IMAGE=memex:dev TAG=test bash scripts/docker-build-test.sh
 #
 # What it verifies:
-#   1. Image builds end-to-end with WITH_LOCAL_MODELS=1.
-#   2. Baked models exist on disk inside the image
-#      (/opt/memex/models/chroma/ and /opt/memex/models/hf/).
-#   3. HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 are set.
+#   1. Image builds end-to-end with every model baked in.
+#   2. Baked models exist on disk inside the image:
+#      /opt/memex/models/chroma/, /hf/, /fastembed/, /tiktoken/, plus the
+#      spaCy en_core_web_sm package installed into /opt/venv.
+#   3. HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 / FASTEMBED_CACHE_PATH /
+#      TIKTOKEN_CACHE_DIR are set in the image env.
 #   4. Container becomes healthy on /healthz.
 #   5. Full API surface works: /, /status, /doc/*, /mem/*, /ctx.
 #   6. The memex persists across container restarts (volume binding works).
@@ -43,7 +45,6 @@ HOST_PORT="${HOST_PORT:-18000}"
 DATA_DIR="${DATA_DIR:-/tmp/memex-docker-data}"
 TOKEN="${MEMEX_API_TOKEN:-e2e-token-$(date +%s)}"
 TIMEOUT_BOOT="${TIMEOUT_BOOT:-60}"
-WITH_LOCAL_MODELS="${WITH_LOCAL_MODELS:-1}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -113,7 +114,6 @@ echo "  image          : $FULL_IMAGE"
 echo "  container      : $CONTAINER"
 echo "  host port      : $HOST_PORT"
 echo "  data dir       : $DATA_DIR"
-echo "  WITH_LOCAL_MODELS: $WITH_LOCAL_MODELS"
 echo "######################################################${X}"
 
 # --- 0. preconditions -------------------------------------------------------
@@ -145,7 +145,6 @@ else
   # the tail in the terminal. The build's own exit code is captured separately.
   BUILD_LOG=/tmp/memex-docker-build.log
   docker build \
-       --build-arg "WITH_LOCAL_MODELS=$WITH_LOCAL_MODELS" \
        "${PROXY_ARGS[@]}" \
        --progress=plain \
        -t "$FULL_IMAGE" \
@@ -169,21 +168,27 @@ note "image size: ${SIZE_MB} MB"
 inspect_env() { docker image inspect "$FULL_IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}'; }
 ENV_DUMP=$(inspect_env)
 
-expect_contains "HF_HOME baked"          "$ENV_DUMP" "HF_HOME=/opt/memex/models/hf"
-expect_contains "HF_HUB_OFFLINE=1"        "$ENV_DUMP" "HF_HUB_OFFLINE=1"
-expect_contains "TRANSFORMERS_OFFLINE=1"  "$ENV_DUMP" "TRANSFORMERS_OFFLINE=1"
-expect_contains "MEMEX_ROOT=/data"        "$ENV_DUMP" "MEMEX_ROOT=/data"
+expect_contains "HF_HOME baked"               "$ENV_DUMP" "HF_HOME=/opt/memex/models/hf"
+expect_contains "HF_HUB_OFFLINE=1"             "$ENV_DUMP" "HF_HUB_OFFLINE=1"
+expect_contains "TRANSFORMERS_OFFLINE=1"       "$ENV_DUMP" "TRANSFORMERS_OFFLINE=1"
+expect_contains "FASTEMBED_CACHE_PATH baked"   "$ENV_DUMP" "FASTEMBED_CACHE_PATH=/opt/memex/models/fastembed"
+expect_contains "TIKTOKEN_CACHE_DIR baked"     "$ENV_DUMP" "TIKTOKEN_CACHE_DIR=/opt/memex/models/tiktoken"
+expect_contains "MEMEX_ROOT=/data"             "$ENV_DUMP" "MEMEX_ROOT=/data"
 
-if [[ "$WITH_LOCAL_MODELS" == "1" ]]; then
-  # File existence inside the image (run a one-shot container with /bin/ls).
-  CHROMA_LISTING=$(docker run --rm --entrypoint /bin/ls "$FULL_IMAGE" /opt/memex/models/chroma/onnx_models/all-MiniLM-L6-v2 2>&1)
-  expect_contains "ChromaDB ONNX baked"   "$CHROMA_LISTING" "onnx"
-  HF_LISTING=$(docker run --rm --entrypoint /bin/ls "$FULL_IMAGE" /opt/memex/models/hf/hub 2>&1)
-  expect_contains "HF MiniLM baked"        "$HF_LISTING" "models--sentence-transformers--all-MiniLM-L6-v2"
-  # symlink for chroma cache wired up
-  SYMLINK=$(docker run --rm --entrypoint /bin/sh "$FULL_IMAGE" -c 'readlink -f /home/memex/.cache/chroma' 2>&1)
-  expect_contains "chroma cache symlinked" "$SYMLINK" "/opt/memex/models/chroma"
-fi
+# Every model the runtime needs must be present on disk inside the image.
+CHROMA_LISTING=$(docker run --rm --entrypoint /bin/ls "$FULL_IMAGE" /opt/memex/models/chroma/onnx_models/all-MiniLM-L6-v2 2>&1)
+expect_contains "ChromaDB ONNX baked"       "$CHROMA_LISTING" "onnx"
+HF_LISTING=$(docker run --rm --entrypoint /bin/ls "$FULL_IMAGE" /opt/memex/models/hf/hub 2>&1)
+expect_contains "HF MiniLM baked"            "$HF_LISTING" "models--sentence-transformers--all-MiniLM-L6-v2"
+FASTEMBED_LISTING=$(docker run --rm --entrypoint /bin/sh "$FULL_IMAGE" -c 'ls -R /opt/memex/models/fastembed 2>/dev/null | head -40' 2>&1)
+expect_contains "fastembed Qdrant/bm25 baked" "$FASTEMBED_LISTING" "bm25|Qdrant"
+TIKTOKEN_LISTING=$(docker run --rm --entrypoint /bin/sh "$FULL_IMAGE" -c 'ls /opt/memex/models/tiktoken 2>/dev/null | wc -l' 2>&1)
+expect_contains "tiktoken cl100k_base baked" "$TIKTOKEN_LISTING" "^[1-9]"
+SPACY_CHECK=$(docker run --rm --entrypoint /opt/venv/bin/python "$FULL_IMAGE" -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy OK')" 2>&1 | tail -1)
+expect_contains "spaCy en_core_web_sm baked" "$SPACY_CHECK" "spaCy OK"
+# symlink for chroma cache wired up
+SYMLINK=$(docker run --rm --entrypoint /bin/sh "$FULL_IMAGE" -c 'readlink -f /home/memex/.cache/chroma' 2>&1)
+expect_contains "chroma cache symlinked"     "$SYMLINK" "/opt/memex/models/chroma"
 
 # --- 3. boot the container --------------------------------------------------
 step "3. boot container"

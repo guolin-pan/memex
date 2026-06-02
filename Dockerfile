@@ -1,25 +1,16 @@
 # syntax=docker/dockerfile:1.7
 # -----------------------------------------------------------------------------
-# memex — personal assistant + knowledge base.
+# memex — fully self-contained image.
+#
+# Everything memex / mem0 / ChromaDB / sentence-transformers / fastembed /
+# spaCy / tiktoken may touch at runtime is installed AND pre-warmed at build
+# time. The container makes ZERO network calls on start. Image size is the
+# explicit, accepted cost — we trade ~1-2 GB on disk for guaranteed offline
+# operation.
 #
 # Two-stage build:
-#   1. builder  — installs deps into a venv AND pre-downloads offline models.
+#   1. builder  — installs deps into a venv AND pre-downloads every model.
 #   2. runtime  — copies the venv + models + non-root user, runs uvicorn.
-#
-# Build arguments:
-#   WITH_LOCAL_MODELS=1  (default) — bake offline models into the image so
-#                                     the container needs NO network calls at
-#                                     start time. Image is ~1.0-1.2 GB.
-#                                     Includes:
-#                                       - ChromaDB ONNX all-MiniLM-L6-v2 (~165 MB)
-#                                       - sentence-transformers/all-MiniLM-L6-v2
-#                                         (safetensors only, ~90 MB; PyTorch /
-#                                         TF / ONNX / Rust / OpenVINO formats
-#                                         are deliberately skipped)
-#                                       - CPU-only PyTorch (~180 MB) needed by mem0's HF embedder
-#   WITH_LOCAL_MODELS=0             — skip offline models. Image is ~500 MB.
-#                                     Suitable when the deployment only uses
-#                                     the openai cloud profile.
 #
 # Runtime contract:
 #   - Data lives in /data (mount a host volume here for persistence).
@@ -29,8 +20,8 @@
 # -----------------------------------------------------------------------------
 
 ARG PYTHON_VERSION=3.11-slim-bookworm
-ARG WITH_LOCAL_MODELS=1
-# CPU-only PyTorch wheel index — ~180 MB instead of ~800 MB for the CUDA one.
+# CPU-only PyTorch wheel index — we don't ship CUDA here, the GPU wheel would
+# add ~600 MB for nothing on a typical server.
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 # ============================================================================
@@ -38,7 +29,6 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 # ============================================================================
 FROM python:${PYTHON_VERSION} AS builder
 
-ARG WITH_LOCAL_MODELS
 ARG TORCH_INDEX_URL
 
 # Proxy build args. When passed via --build-arg HTTP_PROXY=... BuildKit
@@ -52,10 +42,15 @@ ARG http_proxy=
 ARG https_proxy=
 ARG no_proxy=localhost,127.0.0.1
 
+# Bake the same cache locations that the runtime will use so every model
+# pre-download lands inside /opt/memex/models and can be COPY'd unchanged.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HOME=/opt/memex/models/hf \
+    FASTEMBED_CACHE_PATH=/opt/memex/models/fastembed \
+    TIKTOKEN_CACHE_DIR=/opt/memex/models/tiktoken
 
 # Build tools for native wheels (chromadb pulls in compiled deps on some archs).
 RUN apt-get update \
@@ -70,53 +65,72 @@ COPY pyproject.toml README.md ./
 COPY memex ./memex
 COPY templates ./templates
 
+# Install order matters:
+#   1. Create venv + bump pip/wheel.
+#   2. Install CPU-only torch FIRST from the CPU wheel index. Otherwise
+#      `pip install .` would resolve sentence-transformers → torch and pull
+#      the ~800 MB CUDA wheel from the default PyPI index.
+#   3. `pip install .` brings in the project itself + every core dep
+#      (chromadb, mem0ai[nlp] = spacy, sentence-transformers, fastembed,
+#      tiktoken, fastapi, uvicorn, ...). torch already satisfied → skipped.
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip wheel \
+ && /opt/venv/bin/pip install --index-url "$TORCH_INDEX_URL" "torch>=2.0,<3" \
  && /opt/venv/bin/pip install .
 
 # -----------------------------------------------------------------------------
-# Offline models — controlled by WITH_LOCAL_MODELS.
-#
-# We bake them into /opt/memex/models/ so the runtime stage can COPY them
-# unconditionally. When WITH_LOCAL_MODELS=0 the directory is just empty stubs.
+# Pre-warm every model that mem0 / ChromaDB / sentence-transformers / fastembed
+# / spaCy / tiktoken may try to fetch at runtime. After this stage,
+# /opt/memex/models/ is self-sufficient.
 # -----------------------------------------------------------------------------
+RUN mkdir -p /opt/memex/models/hf \
+             /opt/memex/models/chroma \
+             /opt/memex/models/fastembed \
+             /opt/memex/models/tiktoken
 
-RUN mkdir -p /opt/memex/models/hf /opt/memex/models/chroma
+# 1) spaCy en_core_web_sm — mem0/utils/spacy_models.py loads this for both
+#    lemma and "full" passes (lemma / NER / dep parse). Installed as a Python
+#    package into the venv, so it travels with the /opt/venv copy in stage 2.
+RUN echo ">>> downloading spaCy en_core_web_sm ..." \
+ && /opt/venv/bin/python -m spacy download en_core_web_sm \
+ && /opt/venv/bin/python -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy en_core_web_sm OK')"
 
-# Install CPU-only torch + sentence-transformers only when needed.
-# Order matters: torch from the CPU wheel index FIRST, then sentence-transformers.
-# Pip sees torch is already satisfied and won't pull the ~800 MB CUDA wheel.
-RUN if [ "$WITH_LOCAL_MODELS" = "1" ]; then \
-      echo ">>> installing CPU-only torch from $TORCH_INDEX_URL ..." && \
-      /opt/venv/bin/pip install --index-url "$TORCH_INDEX_URL" "torch>=2.0,<3" && \
-      echo ">>> installing sentence-transformers (torch already satisfied) ..." && \
-      /opt/venv/bin/pip install "sentence-transformers>=2.7,<6" ; \
-    else \
-      echo ">>> WITH_LOCAL_MODELS=0, skipping torch + sentence-transformers"; \
-    fi
+# 2) ChromaDB ONNX all-MiniLM-L6-v2 — ChromaDB hardcodes
+#    Path.home() / .cache / chroma / onnx_models / ... for its bundled default
+#    embedder. Warm it up under /root and shift the directory into
+#    /opt/memex/models/chroma so the runtime stage can mount it at a stable
+#    location.
+RUN echo ">>> warming up ChromaDB ONNX MiniLM ..." \
+ && /opt/venv/bin/python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['warm up']); print('ChromaDB ONNX MiniLM OK')" \
+ && cp -r /root/.cache/chroma /opt/memex/models/chroma_src \
+ && mv /opt/memex/models/chroma_src/onnx_models /opt/memex/models/chroma/onnx_models \
+ && rm -rf /opt/memex/models/chroma_src
 
-# Pre-download the actual model files.
-# 1) ChromaDB ONNX MiniLM goes to ${HOME}/.cache/chroma/onnx_models/all-MiniLM-L6-v2/
-#    (hardcoded path; we copy it into our image-baked dir after).
-# 2) HuggingFace sentence-transformers/all-MiniLM-L6-v2 goes to $HF_HOME.
-ENV HF_HOME=/opt/memex/models/hf
-RUN if [ "$WITH_LOCAL_MODELS" = "1" ]; then \
-      echo ">>> warming up ChromaDB ONNX MiniLM ..." && \
-      /opt/venv/bin/python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['warm up'])" && \
-      cp -r /root/.cache/chroma /opt/memex/models/chroma_src && \
-      mv /opt/memex/models/chroma_src/onnx_models /opt/memex/models/chroma/onnx_models && \
-      rm -rf /opt/memex/models/chroma_src && \
-      echo ">>> downloading sentence-transformers/all-MiniLM-L6-v2 (safetensors only) ..." && \
-      /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/all-MiniLM-L6-v2', allow_patterns=['*.json', '*.txt', 'model.safetensors', '1_Pooling/*'])" && \
-      echo ">>> baked model sizes:" && du -sh /opt/memex/models/* ; \
-    fi
+# 3) HuggingFace sentence-transformers/all-MiniLM-L6-v2 — full snapshot. mem0's
+#    "huggingface" embedder backend (selected when our config uses
+#    chroma-default / sentence-transformers) loads this via SentenceTransformer.
+RUN echo ">>> downloading sentence-transformers/all-MiniLM-L6-v2 (full snapshot) ..." \
+ && /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/all-MiniLM-L6-v2'); print('HF MiniLM full snapshot OK')"
+
+# 4) fastembed Qdrant/bm25 — mem0/vector_stores/qdrant.py lazily loads this
+#    SparseTextEmbedding for BM25 keyword search. Pre-warm so the model files
+#    land in $FASTEMBED_CACHE_PATH.
+RUN echo ">>> downloading fastembed Qdrant/bm25 ..." \
+ && /opt/venv/bin/python -c "from fastembed import SparseTextEmbedding; m = SparseTextEmbedding(model_name='Qdrant/bm25'); list(m.embed(['warm up'])); print('fastembed Qdrant/bm25 OK')"
+
+# 5) tiktoken cl100k_base — memex/core/utils.py uses tiktoken.get_encoding('cl100k_base')
+#    for chunking / token counting. tiktoken fetches the BPE blob over HTTP
+#    on first use unless TIKTOKEN_CACHE_DIR is populated; pre-warm it so the
+#    blob is on disk before runtime.
+RUN echo ">>> warming up tiktoken cl100k_base ..." \
+ && /opt/venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base').encode('warm up'); print('tiktoken cl100k_base OK')"
+
+RUN echo ">>> baked model sizes:" && du -sh /opt/memex/models/*
 
 # ============================================================================
 # Stage 2 — runtime
 # ============================================================================
 FROM python:${PYTHON_VERSION} AS runtime
-
-ARG WITH_LOCAL_MODELS
 
 # Proxy ARGs — only used by this stage's apt-get below. NOT set as ENV in the
 # final image so the running container doesn't accidentally route LLM /
@@ -138,6 +152,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # SENTENCE_TRANSFORMERS_HOME because that would point ST at $ST_HOME/
     # (no /hub/) and miss the baked files.
     HF_HOME=/opt/memex/models/hf \
+    # fastembed reads this; without it fastembed caches under a system temp
+    # dir, which (a) is wiped on container restart and (b) wouldn't contain
+    # the baked model files we pulled in stage 1.
+    FASTEMBED_CACHE_PATH=/opt/memex/models/fastembed \
+    # tiktoken reads this to locate cached BPE blobs.
+    TIKTOKEN_CACHE_DIR=/opt/memex/models/tiktoken \
+    # All three "offline" toggles below tell the HuggingFace stack to never
+    # phone home. The baked /opt/memex/models/hf/ is the source of truth.
     TRANSFORMERS_OFFLINE=1 \
     HF_HUB_OFFLINE=1 \
     HF_DATASETS_OFFLINE=1 \
@@ -172,17 +194,15 @@ COPY --from=builder /opt/memex/models /opt/memex/models
 
 # ChromaDB hard-codes `Path.home() / ".cache" / "chroma" / "onnx_models"` for
 # its ONNX model lookup. Symlink it to the baked image location so no download
-# happens at runtime.
+# happens at runtime regardless of which uid the container actually runs as.
 RUN mkdir -p /home/memex/.cache /data \
- && if [ -d /opt/memex/models/chroma/onnx_models ]; then \
-      ln -sfn /opt/memex/models/chroma /home/memex/.cache/chroma; \
-    fi \
+ && ln -sfn /opt/memex/models/chroma /home/memex/.cache/chroma \
  && chown -R memex:memex /data /home/memex /opt/memex/models
 
 # NOTE: TRANSFORMERS_OFFLINE / HF_HUB_OFFLINE / HF_DATASETS_OFFLINE are set
 # above so the HuggingFace stack refuses network calls and uses the baked
-# /opt/memex/models/hf cache instead. If you built with WITH_LOCAL_MODELS=0
-# or want to fetch a *different* HF model at runtime, override them:
+# /opt/memex/models/hf cache instead. If you ever want to fetch a *different*
+# HF model at runtime, override them:
 #     docker compose run -e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0 memex …
 
 USER memex

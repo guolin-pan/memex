@@ -16,10 +16,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Bake offline models into the image (~1.4 GB total). Set to 0 for a
-        # slim image (~500 MB) when you'll only use the openai cloud profile.
-        WITH_LOCAL_MODELS: "${WITH_LOCAL_MODELS:-1}"
     image: memex:latest
     container_name: memex
     restart: unless-stopped
@@ -32,9 +28,10 @@ services:
       MEMEX_API_TOKEN: "${MEMEX_API_TOKEN:-}"
       # Forwarded to mem0 / OpenAI client when the profile uses them.
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      # Image bakes offline models at /opt/memex/models and sets HF_HOME +
-      # *_OFFLINE flags itself. Do NOT override here unless you built with
-      # WITH_LOCAL_MODELS=0 or want to pull a different HF model at runtime:
+      # Image bakes every model at /opt/memex/models and sets HF_HOME +
+      # FASTEMBED_CACHE_PATH + TIKTOKEN_CACHE_DIR + *_OFFLINE flags itself.
+      # Do NOT override here unless you want to fetch a different HF model
+      # at runtime:
       #   HF_HUB_OFFLINE: "0"
       #   TRANSFORMERS_OFFLINE: "0"
       #   HF_HOME: /data/.cache/hf       # then put models on the volume

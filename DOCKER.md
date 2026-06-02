@@ -56,43 +56,40 @@ bearer-token auth — in one command:
 ```bash
 bash scripts/docker-build-test.sh                # full build + tests (~10-15 min)
 FAST=1     bash scripts/docker-build-test.sh    # skip rebuild if memex:e2e exists
-WITH_LOCAL_MODELS=0 bash scripts/docker-build-test.sh   # build slim variant
 ```
 
 Pre-reqs: docker daemon access (you're in the `docker` group **or** running under sudo) plus `curl` and `jq` on the host.
 
-### Image variants (build arg `WITH_LOCAL_MODELS`)
+### What's in the image
 
-| Variant                                | Size       | Network at runtime?         | When to pick                                 |
-|----------------------------------------|------------|-----------------------------|----------------------------------------------|
-| `WITH_LOCAL_MODELS=1` **(default)**    | ~1.0-1.2 GB | **No** — fully offline      | Self-hosted, local LLM, air-gapped, privacy  |
-| `WITH_LOCAL_MODELS=0`                  | ~500 MB    | Yes — downloads on demand   | Pure openai-cloud profile, size-constrained  |
+The Dockerfile is intentionally a single, fully-loaded variant. Image size
+(~1.5-2 GB compressed) is the accepted cost of guaranteed offline operation —
+**no model fetch ever happens at container start**.
 
-What's baked when `WITH_LOCAL_MODELS=1`:
+Everything baked at `/opt/memex/models/` (plus spaCy as a venv package):
 
-- ChromaDB ONNX `all-MiniLM-L6-v2` (~165 MB) at `/opt/memex/models/chroma/onnx_models/` — used by the wiki RAG layer when `embedder.provider: chroma-default`.
-- HuggingFace `sentence-transformers/all-MiniLM-L6-v2` (~90 MB) at `/opt/memex/models/hf/` — used by mem0 when `embedder.provider: huggingface`. **Only the safetensors format + tokenizer + configs are pulled**; the redundant PyTorch / TF / Rust / ONNX / OpenVINO formats (which would balloon the download to ~890 MB) are skipped via `allow_patterns`.
-- CPU-only PyTorch (~180 MB) needed by sentence-transformers.
+| Asset                                                   | Used by                                                |
+|---------------------------------------------------------|--------------------------------------------------------|
+| `chroma/onnx_models/all-MiniLM-L6-v2/`                  | ChromaDB default embedder (`embedder.provider: chroma-default`) |
+| `hf/hub/models--sentence-transformers--all-MiniLM-L6-v2/` | mem0 HuggingFace embedder backend (full snapshot)      |
+| `fastembed/...Qdrant--bm25...`                           | mem0/qdrant BM25 keyword search                       |
+| `tiktoken/...`                                           | memex chunking / token counting (`cl100k_base`)        |
+| spaCy `en_core_web_sm` (installed into `/opt/venv`)     | mem0 lemmatization + entity extraction (`mem0ai[nlp]`) |
+| CPU-only PyTorch                                        | sentence-transformers / mem0 huggingface backend       |
 
-Both `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are set so the HuggingFace
-stack refuses to phone home. If you ever want to fetch a *different* HF model
-at runtime, override them via env:
+`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=1`,
+`FASTEMBED_CACHE_PATH`, and `TIKTOKEN_CACHE_DIR` are all set in the image so
+the HF / fastembed / tiktoken stacks refuse network and serve from the baked
+caches.
+
+If you ever want to fetch a *different* HF model at runtime, override the
+offline flags via env:
 
 ```bash
 docker compose run --rm \
   -e HF_HUB_OFFLINE=0 \
   -e TRANSFORMERS_OFFLINE=0 \
   memex python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('bge-small-en-v1.5')"
-```
-
-To build the slim variant:
-
-```bash
-# via compose
-WITH_LOCAL_MODELS=0 docker compose build
-
-# or via plain docker
-docker build --build-arg WITH_LOCAL_MODELS=0 -t memex:slim .
 ```
 
 After the first start, `./data/` on the host is populated with:
@@ -277,11 +274,11 @@ in your shell and leave the agent files unchanged.
 
 | Symptom                                | Likely cause                                                    | Fix                                                                                            |
 |----------------------------------------|------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
-| `OSError: ... offline mode`            | Built with `WITH_LOCAL_MODELS=0` but trying to use a HF model    | Rebuild with `WITH_LOCAL_MODELS=1`, or runtime-override `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0` |
+| `OSError: ... offline mode`            | A different HF model than the one baked at build time is being requested | Either bake it into the image too (extend the Dockerfile's pre-warm step) or runtime-override `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0` and provide network access |
 | `401 invalid or missing bearer token`  | `MEMEX_API_TOKEN` is set but the request omits the header        | Send `Authorization: Bearer <token>` (or unset the env var to make the API open)               |
 | `/mem/*` returns `500 OPENAI_API_KEY`  | LLM profile is `openai` (cloud) but no key in `.env`             | Either set `OPENAI_API_KEY` or switch `memex.yaml` to a local LLM endpoint                     |
 | Container restarts in a loop           | Volume `./data/` has wrong ownership                             | `sudo chown -R 1000:1000 ./data` (matches the in-container `memex` user)                       |
-| `Failed to download chroma onnx model` | Built with `WITH_LOCAL_MODELS=0` and no internet at runtime      | Rebuild with `WITH_LOCAL_MODELS=1` (the default), or grant network access                      |
+| `Failed to download chroma onnx model` | Container has no network AND the baked model dir was clobbered by a bind mount or a manual `rm` | Rebuild the image; do not mount over `/opt/memex/models`                                       |
 
 ---
 
