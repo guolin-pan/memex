@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from memex.cli import app
@@ -162,3 +163,53 @@ def test_merge_hooks_deduplicates_by_command():
     }
     merged = _merge_hooks(existing, new)
     assert len(merged["hooks"]["beforeSubmitPrompt"]) == 1
+
+
+def test_wheel_ships_all_templates(tmp_path: Path):
+    """Regression guard for pyproject.toml [tool.setuptools.package-data].
+
+    If you add a new template (e.g. templates/foo/bar.md) without also listing
+    its parent directory in package-data, setuptools silently drops it from
+    the wheel and `memex cursor install-*` then crashes for anyone who
+    installed memex via `pip install` / `uv tool install`. This test builds
+    a wheel and asserts every file in templates/ on disk made it in.
+    """
+    import shutil
+    import subprocess
+    import zipfile
+
+    uv = shutil.which("uv")
+    if not uv:
+        pytest.skip("uv not on PATH; can't drive `uv build`")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    res = subprocess.run(
+        [uv, "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert res.returncode == 0, f"uv build failed:\n{res.stdout}\n{res.stderr}"
+
+    wheels = list(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, got {wheels}"
+
+    with zipfile.ZipFile(wheels[0]) as zf:
+        shipped = set(zf.namelist())
+
+    expected: set[str] = set()
+    src = repo_root / "templates"
+    for p in src.rglob("*"):
+        if p.is_file():
+            # The wheel layout places templates/ at the top of the zip;
+            # `resources.files("memex") / ".." / "templates"` resolves into
+            # this directory when the package is installed.
+            expected.add("templates/" + str(p.relative_to(src)))
+
+    missing = expected - shipped
+    assert not missing, (
+        f"wheel is missing template files: {sorted(missing)}.\n"
+        f"Update [tool.setuptools.package-data] memex = [...] in pyproject.toml "
+        f"to include their parent directory glob."
+    )

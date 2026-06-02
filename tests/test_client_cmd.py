@@ -13,13 +13,15 @@ import threading
 import time
 
 import httpx
-import pytest
 from typer.testing import CliRunner
 
 from memex.cli import app
 from memex.core.config import Config
 from memex.core.wiki import Wiki
 from memex.server.api import build_app
+
+# `live_server` is provided by tests/conftest.py — shared with test_memex_client_script.py
+# so both surfaces hit the same FastAPI instance on a real port.
 
 runner = CliRunner()
 
@@ -28,42 +30,6 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-@pytest.fixture()
-def live_server(cfg: Config, monkeypatch):
-    """Boot uvicorn in a background thread, yield its base URL, shut it down."""
-    import uvicorn
-
-    port = _free_port()
-    api = build_app(str(cfg.root))
-    config = uvicorn.Config(api, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-
-    t = threading.Thread(target=server.run, daemon=True)
-    t.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            r = httpx.get(f"{base_url}/healthz", timeout=0.5)
-            if r.status_code == 200:
-                break
-        except httpx.HTTPError:
-            time.sleep(0.1)
-    else:
-        server.should_exit = True
-        raise RuntimeError("uvicorn did not start in time")
-
-    monkeypatch.setenv("MEMEX_API_URL", base_url)
-    monkeypatch.delenv("MEMEX_API_TOKEN", raising=False)
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        t.join(timeout=5)
 
 
 def _seed(cfg: Config) -> None:

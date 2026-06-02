@@ -68,7 +68,14 @@ include = ["memex*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-memex = ["../templates/*"]
+# Ship the Cursor templates that `memex cursor install-{rule,hooks,agents}`
+# read at runtime. The `../templates/...` paths reach up out of memex/ to the
+# sibling templates/ directory; setuptools accepts this but each subdir has
+# to be listed explicitly because the top-level glob isn't recursive.
+memex = [
+    "../templates/*",
+    "../templates/agents/*",
+]
 
 [tool.uv]
 # `uv sync` will install [dev] by default — matches how `bash scripts/install.sh`

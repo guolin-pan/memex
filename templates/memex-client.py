@@ -114,7 +114,7 @@ def _die(status: int, parsed: Any, raw: str) -> None:
 def _print_kv(data: dict[str, Any]) -> None:
     if not data:
         return
-    width = max((len(str(k)) for k in data.keys()), default=0)
+    width = max((len(str(k)) for k in data), default=0)
     for k, v in data.items():
         sys.stdout.write(f"{str(k).ljust(width)}  {v}\n")
 
@@ -398,7 +398,26 @@ def cmd_mem_profile(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_global_flags(p: argparse.ArgumentParser) -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Top-level parser.
+
+    `--url` / `--token` live on the root parser only, not on each subparser.
+    Mirrors how `memex client` (Typer + Click) handles its callback options:
+    they must appear *before* the subcommand:
+
+        memex-client.py --url http://host:8000 --token abc status   ✓
+        memex-client.py status --url http://host:8000 …             ✗
+
+    Why not duplicate them on every subparser?  argparse subparsers re-apply
+    their own `default=None` to the merged namespace, which would silently
+    overwrite the URL the parent already parsed.  Keeping the flags at the
+    top is unambiguous, less code, and matches the Typer surface.
+    """
+    p = argparse.ArgumentParser(
+        prog="memex-client",
+        description="Standalone HTTP client for the memex API (stdlib-only).",
+        epilog="Global flags --url / --token MUST appear before the subcommand.",
+    )
     p.add_argument(
         "--url",
         "-u",
@@ -410,25 +429,15 @@ def _add_global_flags(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Bearer token for Authorization header (default: $MEMEX_API_TOKEN).",
     )
-
-
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="memex-client",
-        description="Standalone HTTP client for the memex API (stdlib-only).",
-    )
-    _add_global_flags(p)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # status
     sp = sub.add_parser("status", help="Show the remote memex's status.")
-    _add_global_flags(sp)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_status)
 
     # ctx
     sp = sub.add_parser("ctx", help="Build a unified context block on the server.")
-    _add_global_flags(sp)
     sp.add_argument("query", nargs="?", default="")
     sp.add_argument("--budget", type=int, default=None)
     sp.add_argument("--top-k-docs", "-k", type=int, default=None)
@@ -441,7 +450,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # raw
     sp = sub.add_parser("raw", help="Arbitrary HTTP call.")
-    _add_global_flags(sp)
     sp.add_argument("method")
     sp.add_argument("path")
     sp.add_argument("--body", default=None, help="JSON body for POST/PUT.")
@@ -449,11 +457,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # doc
     doc = sub.add_parser("doc", help="Remote wiki operations.")
-    _add_global_flags(doc)
     doc_sub = doc.add_subparsers(dest="doc_cmd", required=True)
 
     sp = doc_sub.add_parser("add", help="Add a markdown doc.")
-    _add_global_flags(sp)
     sp.add_argument("source", nargs="?", default="-")
     sp.add_argument("--title", "-t", default=None)
     sp.add_argument("--tags", default="")
@@ -461,7 +467,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_doc_add)
 
     sp = doc_sub.add_parser("search", help="Hybrid wiki search.")
-    _add_global_flags(sp)
     sp.add_argument("query")
     sp.add_argument("--top-k", "-k", type=int, default=None)
     sp.add_argument("--tag", default=None)
@@ -470,36 +475,30 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_doc_search)
 
     sp = doc_sub.add_parser("ls", help="List docs.")
-    _add_global_flags(sp)
     sp.add_argument("--tag", default=None)
     sp.add_argument("--since", default=None)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doc_ls)
 
     sp = doc_sub.add_parser("show", help="Show one doc.")
-    _add_global_flags(sp)
     sp.add_argument("ident")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doc_show)
 
     sp = doc_sub.add_parser("rm", help="Remove a doc.")
-    _add_global_flags(sp)
     sp.add_argument("ident")
     sp.add_argument("--keep-file", action="store_true")
     sp.set_defaults(func=cmd_doc_rm)
 
     sp = doc_sub.add_parser("reindex", help="Reindex the wiki.")
-    _add_global_flags(sp)
     sp.add_argument("--all", dest="all_", action="store_true")
     sp.set_defaults(func=cmd_doc_reindex)
 
     # mem
     mem = sub.add_parser("mem", help="Remote memory operations.")
-    _add_global_flags(mem)
     mem_sub = mem.add_subparsers(dest="mem_cmd", required=True)
 
     sp = mem_sub.add_parser("add", help="Add a memory.")
-    _add_global_flags(sp)
     sp.add_argument("text")
     sp.add_argument("--category", "-c", default="fact")
     sp.add_argument("--tag", action="append", default=None)
@@ -509,7 +508,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(infer=False, func=cmd_mem_add)
 
     sp = mem_sub.add_parser("search", help="Semantic memory search.")
-    _add_global_flags(sp)
     sp.add_argument("query")
     sp.add_argument("--top-k", "-k", type=int, default=5)
     sp.add_argument("--category", "-c", default=None)
@@ -517,23 +515,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_mem_search)
 
     sp = mem_sub.add_parser("ls", help="List memories.")
-    _add_global_flags(sp)
     sp.add_argument("--category", "-c", default=None)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_mem_ls)
 
     sp = mem_sub.add_parser("show", help="Show one memory.")
-    _add_global_flags(sp)
     sp.add_argument("mem_id")
     sp.set_defaults(func=cmd_mem_show)
 
     sp = mem_sub.add_parser("rm", help="Delete a memory (or 'all' to wipe).")
-    _add_global_flags(sp)
     sp.add_argument("mem_id")
     sp.set_defaults(func=cmd_mem_rm)
 
     sp = mem_sub.add_parser("profile", help="Render the 'About the user' block.")
-    _add_global_flags(sp)
     sp.add_argument("--max-items", type=int, default=20)
     sp.add_argument("--write", default=None)
     sp.set_defaults(func=cmd_mem_profile)
