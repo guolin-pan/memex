@@ -41,6 +41,17 @@ FROM python:${PYTHON_VERSION} AS builder
 ARG WITH_LOCAL_MODELS
 ARG TORCH_INDEX_URL
 
+# Proxy build args. When passed via --build-arg HTTP_PROXY=... BuildKit
+# automatically exports these to the env of every RUN command (special-cased
+# for the HTTP_PROXY family), so apt / pip / curl pick them up without
+# further wiring. Leave empty if your host has direct internet access.
+ARG HTTP_PROXY=
+ARG HTTPS_PROXY=
+ARG NO_PROXY=localhost,127.0.0.1
+ARG http_proxy=
+ARG https_proxy=
+ARG no_proxy=localhost,127.0.0.1
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -107,6 +118,16 @@ FROM python:${PYTHON_VERSION} AS runtime
 
 ARG WITH_LOCAL_MODELS
 
+# Proxy ARGs — only used by this stage's apt-get below. NOT set as ENV in the
+# final image so the running container doesn't accidentally route LLM /
+# embedder traffic through the build-time proxy.
+ARG HTTP_PROXY=
+ARG HTTPS_PROXY=
+ARG NO_PROXY=localhost,127.0.0.1
+ARG http_proxy=
+ARG https_proxy=
+ARG no_proxy=localhost,127.0.0.1
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH \
@@ -119,7 +140,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/opt/memex/models/hf \
     TRANSFORMERS_OFFLINE=1 \
     HF_HUB_OFFLINE=1 \
-    HF_DATASETS_OFFLINE=1
+    HF_DATASETS_OFFLINE=1 \
+    # mem0 defaults its internal dir to ~/.mem0. Inside the container that's
+    # /home/memex/.mem0 which is owned by uid 1000; if the container is run
+    # with --user $(id -u):$(id -g) and the host uid isn't 1000, mem0 can't
+    # write there. Point MEM0_DIR at a sub-path of the persistent volume so
+    # it always lands on a writable filesystem regardless of uid.
+    MEM0_DIR=/data/.cache/mem0_home \
+    # torch._inductor calls getpass.getuser() which calls pwd.getpwuid()
+    # which KeyErrors when the container runs as a uid that has no /etc/passwd
+    # entry (the common case when --user $(id -u) doesn't match the in-image
+    # memex user's uid 1000). getpass falls back to env LOGNAME / USER before
+    # hitting pwd, so setting USER=memex is enough to keep torch importable.
+    # Also pin TORCHINDUCTOR_CACHE_DIR to a writable path independent of HOME.
+    USER=memex \
+    LOGNAME=memex \
+    TORCHINDUCTOR_CACHE_DIR=/tmp/torch-inductor
 
 # Minimal runtime deps. git for `memex init`'s `git init`; tini for proper PID 1.
 RUN apt-get update \

@@ -28,33 +28,75 @@ Built on:
 - `git` (for `memex init`'s `git init`).
 - Optional: `Docker` ≥ 20.10 + `docker compose` v2 for containerized deployment.
 
-### From source — local dev
+### Recommended: one-line install script (auto-detects `uv` or `pip`)
 
 ```bash
 git clone <repo>
 cd memex
-
-# create + activate a virtualenv
-python3 -m venv .venv
+bash scripts/install.sh                  # creates .venv/ and installs memex (+ [dev] extras)
 source .venv/bin/activate
-
-# core install (editable)
-pip install -e .
-
-# optional extras
-pip install -e ".[dev]"        # pytest + ruff (for contributing)
-pip install -e ".[local]"      # sentence-transformers (offline embeddings; ~800 MB torch)
+memex --version
 ```
 
-### As a user (no source)
+The installer is idempotent and safe to rerun. It picks `uv` when available
+(10-100x faster than pip) and falls back to `python3 -m venv + pip`. Flags:
+
+| Flag | Effect |
+|---|---|
+| `--uv`                | force `uv` (errors out if not installed) |
+| `--pip`               | force `pip` even when `uv` is on PATH |
+| `--tool`              | `uv tool install .` — isolated CLI like pipx, no `.venv/` |
+| `--system`            | install into the active Python env (no `.venv/` created) |
+| `--extras dev,local`  | comma-separated extras |
+| `--venv /path/...`    | venv location (default `.venv/`) |
+| `--python 3.11`       | force a Python version (uv only) |
+| `--quiet`             | print only PASS/FAIL |
+
+Run `bash scripts/install.sh --help` for the full reference.
+
+### From source — manual
 
 ```bash
-pipx install .           # isolated env, recommended
-# or
-pip install .            # straight into your active env
+git clone <repo>
+cd memex
 ```
 
-After install you have:
+With **uv** (recommended; auto-resolves Python, much faster):
+
+```bash
+uv venv .venv                            # also picks the right Python
+source .venv/bin/activate
+uv pip install -e .                      # core
+uv pip install -e ".[dev]"               # + pytest, ruff
+uv pip install -e ".[local]"             # + sentence-transformers (~800 MB torch)
+uv lock                                  # generates uv.lock for reproducible installs
+```
+
+With **pip**:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pip install -e ".[dev]"
+pip install -e ".[local]"
+```
+
+### Install as an end-user CLI (no source repo to manage)
+
+With **uv** (recommended; isolated env like pipx):
+
+```bash
+uv tool install <path-to-cloned-repo>    # `memex` becomes available on PATH
+```
+
+With **pipx**:
+
+```bash
+pipx install <path-to-cloned-repo>
+```
+
+After any of the above:
 
 ```bash
 memex --version

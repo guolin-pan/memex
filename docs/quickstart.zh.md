@@ -10,25 +10,64 @@
 
 ## 1. 安装
 
+任选一条路径，最终都得到同一个 `memex` CLI。第一条最快，人和 LLM agent 都能用。
+
+### A. 一键脚本（自动识别 `uv` / `pip`）
+
+```bash
+git clone <repo-url>
+cd memex
+bash scripts/install.sh                  # 默认：装到 .venv/，带 [dev] extras
+source .venv/bin/activate
+```
+
+脚本是幂等的，从不交互。`bash scripts/install.sh --help` 看完整选项：`--uv`、
+`--pip`、`--tool`（uv-tool / pipx 风格）、`--system`、`--extras`、`--venv`、
+`--python`。
+
+### B. 手动 + uv（最快，推荐 power user）
+
 ```bash
 git clone <repo-url>
 cd memex
 
-python3 -m venv .venv
+uv venv .venv                            # uv 自动挑 Python
 source .venv/bin/activate
-pip install -e .
-
-# 可选 extras
-pip install -e ".[dev]"      # pytest + ruff
-pip install -e ".[local]"    # sentence-transformers（离线嵌入；会拉 torch）
+uv pip install -e ".[dev]"               # core + pytest/ruff；不要测试就去掉 [dev]
+uv lock                                  # 可选：生成 lockfile，可复现安装
 ```
 
-验证：
+### C. 手动 + pip
+
+```bash
+git clone <repo-url>
+cd memex
+
+python3 -m venv .venv                    # 需要 python>=3.10 且带 ensurepip
+source .venv/bin/activate
+pip install --upgrade pip wheel
+pip install -e ".[dev]"
+```
+
+### D. 作为最终用户 CLI 安装（不想维护 source 仓库）
+
+```bash
+uv tool install <已 clone 的仓库路径>     # uv 的 pipx 等价物，隔离环境
+# 或
+pipx install <已 clone 的仓库路径>
+```
+
+### 验证
 
 ```bash
 memex --version
 # memex 0.1.0
 ```
+
+可选 extras（和任何路径配合用都行）：
+
+- `[dev]` —— pytest + ruff（贡献代码 / 跑测试）
+- `[local]` —— `sentence-transformers`（离线嵌入；会拉 torch，~800 MB）
 
 ## 2. 初始化数据根
 

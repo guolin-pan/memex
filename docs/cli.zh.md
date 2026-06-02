@@ -2,6 +2,19 @@
 
 每个命令、每个参数、可复制的例子。`memex <group> --help` 永远是权威帮助文本；这份文档补充例子和"什么时候用"。
 
+## 安装
+
+如果当前 PATH 里还没有 `memex` 二进制，最快路径：
+
+```bash
+git clone <repo-url> && cd memex
+bash scripts/install.sh                  # 自动选 uv / pip，幂等
+source .venv/bin/activate
+memex --version
+```
+
+其他方式（uv tool、pipx、手动 venv）见 [quickstart.zh.md](quickstart.zh.md)。
+
 ## 全局参数
 
 ```

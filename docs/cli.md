@@ -2,6 +2,19 @@
 
 Every command in one place. Run `memex <group> --help` for the canonical help text any time; this document adds examples + the "when do I reach for this?" framing.
 
+## Install
+
+If you don't yet have the `memex` binary on PATH, the fast path is:
+
+```bash
+git clone <repo-url> && cd memex
+bash scripts/install.sh                  # auto-detects uv / pip, idempotent
+source .venv/bin/activate
+memex --version
+```
+
+See [quickstart.md](quickstart.md) for the alternatives (uv tool, pipx, manual venv).
+
 ## Global flags
 
 ```

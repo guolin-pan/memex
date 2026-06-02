@@ -68,6 +68,12 @@ exclude = ["tests*"]
 [tool.setuptools.package-data]
 memex = ["../templates/*"]
 
+[tool.uv]
+# `uv sync` will install [dev] by default — matches how `bash scripts/install.sh`
+# behaves out of the box. Override with `uv sync --no-dev` or `--all-extras`.
+default-groups = []          # we use PEP 735 extras, not dependency-groups, so leave empty
+package = true               # install the project itself, not just lock dependencies
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

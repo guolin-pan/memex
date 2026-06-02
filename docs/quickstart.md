@@ -10,25 +10,65 @@ Five steps. About ten minutes. Lands you at "I can search my own notes and the a
 
 ## 1. Install
 
+Pick whichever path suits you. All produce the same `memex` CLI; the first
+one is the fastest and works for both humans and LLM agents.
+
+### A. one-line script (auto-detects `uv` or `pip`)
+
+```bash
+git clone <repo-url>
+cd memex
+bash scripts/install.sh                  # default: dev install into .venv/
+source .venv/bin/activate
+```
+
+The script is idempotent and never prompts. See `bash scripts/install.sh --help`
+for `--uv`, `--pip`, `--tool` (uv-tool / pipx-style), `--system`, `--extras`,
+`--venv`, `--python`.
+
+### B. manual with uv (fast, recommended for power users)
+
 ```bash
 git clone <repo-url>
 cd memex
 
-python3 -m venv .venv
+uv venv .venv                            # uv picks Python automatically
 source .venv/bin/activate
-pip install -e .
-
-# optional extras
-pip install -e ".[dev]"      # pytest + ruff
-pip install -e ".[local]"    # sentence-transformers (offline embeddings; brings torch)
+uv pip install -e ".[dev]"               # core + pytest/ruff; drop [dev] for runtime-only
+uv lock                                  # optional: lockfile for reproducible installs
 ```
 
-Confirm:
+### C. manual with pip
+
+```bash
+git clone <repo-url>
+cd memex
+
+python3 -m venv .venv                    # requires python>=3.10 with ensurepip
+source .venv/bin/activate
+pip install --upgrade pip wheel
+pip install -e ".[dev]"
+```
+
+### D. install as an end-user CLI (no source repo to maintain)
+
+```bash
+uv tool install <path-to-cloned-repo>    # uv's pipx equivalent — isolated env
+# or
+pipx install <path-to-cloned-repo>
+```
+
+### Verify
 
 ```bash
 memex --version
 # memex 0.1.0
 ```
+
+Optional extras (use with any path):
+
+- `[dev]` — pytest + ruff (for contributing / running the test suite)
+- `[local]` — `sentence-transformers` (offline embeddings; pulls torch, ~800 MB)
 
 ## 2. Initialize a root
 

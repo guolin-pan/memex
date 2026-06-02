@@ -55,9 +55,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# uv lock file is generated; commit only if you use uv.
-# Comment the next line out if you adopt uv as the canonical lockfile.
-uv.lock
+# uv.lock IS committed when you use uv as the canonical lockfile so the
+# install is reproducible. Uncomment below if you want to ignore it.
+# uv.lock
 
 # Generated agent transcripts / terminal dumps (Cursor uses /tmp paths).
 *.transcript.md
