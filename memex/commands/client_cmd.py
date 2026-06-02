@@ -7,9 +7,13 @@ Mirrors the local CLI surface for the operations agents actually need:
   memex client doc {add|search|ls|show|rm}
   memex client mem {add|search|ls|show|rm|profile}
 
-All commands accept `--url` (or env `MEMEX_API_URL`) and `--token` (or env
-`MEMEX_API_TOKEN`). Designed to be safe in subagent shell sandboxes — no
-local filesystem reads, no chroma/mem0 imports.
+Pointing the client at a server (precedence: CLI flag > env > default):
+
+  memex client --url http://host:8000 --token abc123 status
+  MEMEX_API_URL=http://host:8000 MEMEX_API_TOKEN=abc123 memex client status
+
+Designed to be safe in subagent shell sandboxes — no local filesystem reads,
+no chroma/mem0 imports.
 """
 
 from __future__ import annotations
@@ -35,17 +39,52 @@ err_console = Console(stderr=True)
 DEFAULT_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT = 60.0
 
+# Populated by the `memex client` Typer callback below. `--url` / `--token`
+# accepted there override the corresponding env vars for the rest of the
+# subcommand invocation. We can't simply rely on Typer's `envvar=` on each
+# subcommand because then `memex client --url X status` would not work
+# (the callback runs first, before any subcommand binds options).
+_state: dict[str, str | None] = {"url": None, "token": None}
+
+
+@app.callback()
+def _client_root(
+    url: str = typer.Option(
+        None,
+        "--url",
+        "-u",
+        envvar="MEMEX_API_URL",
+        help=f"Server base URL incl. scheme and port. Default: $MEMEX_API_URL or {DEFAULT_URL}.",
+    ),
+    token: str = typer.Option(
+        None,
+        "--token",
+        envvar="MEMEX_API_TOKEN",
+        help="Bearer token for `Authorization: Bearer <token>`. Default: $MEMEX_API_TOKEN (empty = unauthenticated).",
+    ),
+):
+    """Common options shared by every `memex client` subcommand."""
+    _state["url"] = url
+    _state["token"] = token
+
 
 def _http():
     """Lazy-import httpx and return a configured client.
 
-    Reads URL + token from env or kwargs. We instantiate per-call so the
-    server URL can change between commands in the same shell session.
+    URL/token precedence:
+      1. `memex client --url ... --token ...`        (CLI flag)
+      2. `MEMEX_API_URL` / `MEMEX_API_TOKEN`         (env)
+      3. DEFAULT_URL / no auth
+
+    Typer's `envvar=` on the callback above already folds env into `_state`,
+    so the explicit os.environ fallback below is only relevant if the
+    callback was bypassed (e.g. when this module is imported and called
+    programmatically).
     """
     import httpx
 
-    url = os.environ.get("MEMEX_API_URL", DEFAULT_URL).rstrip("/")
-    token = os.environ.get("MEMEX_API_TOKEN", "").strip()
+    url = (_state.get("url") or os.environ.get("MEMEX_API_URL") or DEFAULT_URL).rstrip("/")
+    token = (_state.get("token") or os.environ.get("MEMEX_API_TOKEN") or "").strip()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     return httpx.Client(
         base_url=url, headers=headers, timeout=DEFAULT_TIMEOUT, follow_redirects=True

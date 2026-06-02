@@ -340,9 +340,19 @@ memex serve [--host H] [--port P] [--reload] [--workers N] [-R ROOT]
 
 ## `memex client`
 
-走 httpx 的轻量客户端，镜像了 API 的读写能力。读 `MEMEX_API_URL`（默认 `http://127.0.0.1:8000`）和 `MEMEX_API_TOKEN`。
+走 httpx 的轻量客户端，镜像了 API 的读写能力。
+
+服务端选择（优先级：CLI 标志 > 环境变量 > 默认）：
+
+| 项 | 标志 | 环境变量 | 默认 |
+|---|---|---|---|
+| 服务地址 | `--url`、`-u` | `MEMEX_API_URL` | `http://127.0.0.1:8000` |
+| Bearer 令牌 | `--token` | `MEMEX_API_TOKEN` | _（空 = 不带鉴权头）_ |
+
+`--url` / `--token` 在 `memex client` 这一层接收，对后续每个子命令都生效，比如 `memex client --url http://host:8000 --token abc doc search "x"`。
 
 ```
+memex client [--url URL] [--token T]
 memex client status               [--json]
 memex client ctx QUERY            [--budget N] [-k K] [--write PATH]
                                   [--no-profile|--no-memories|--no-docs]
@@ -365,6 +375,11 @@ memex client raw METHOD PATH      [--body JSON]
 例子：一个 Cursor subagent 通过 HTTP 访问 Docker 部署：
 
 ```bash
+# 一次性指定：
+memex client --url https://memex.internal.example/ --token "$(pass show memex/api-token)" \
+  doc search "postgres tuning" -k 3
+
+# 或在 shell 里钉一次，所有子命令继承：
 export MEMEX_API_URL=https://memex.internal.example/
 export MEMEX_API_TOKEN=$(pass show memex/api-token)
 memex client doc search "postgres tuning" -k 3

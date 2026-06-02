@@ -245,6 +245,10 @@ The `memex client` subcommand is a thin httpx wrapper. LLMs / Cursor subagents
 shell out to it; nothing local-only required.
 
 ```bash
+# Pick a server (precedence: --url > $MEMEX_API_URL > http://127.0.0.1:8000):
+memex client --url http://memex.lan:8000 --token <token> status
+
+# Or via env, useful for shells / agents that set it once:
 export MEMEX_API_URL=http://127.0.0.1:8000      # which server to talk to
 export MEMEX_API_TOKEN=<token>                  # only if the server set MEMEX_API_TOKEN
 
@@ -428,8 +432,9 @@ memex client raw METHOD PATH [--body JSON]                  # debugging escape h
 ```
 
 All commands accept the global `-R/--root` (or `$MEMEX_ROOT`) for the data directory.
-All `memex client …` commands read `MEMEX_API_URL` (default `http://127.0.0.1:8000`)
-and `MEMEX_API_TOKEN` from the environment.
+All `memex client …` commands accept `--url/-u` (or `$MEMEX_API_URL`, default
+`http://127.0.0.1:8000`) and `--token` (or `$MEMEX_API_TOKEN`). CLI flag wins
+over env var.
 
 ---
 

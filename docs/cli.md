@@ -340,9 +340,21 @@ Boots a uvicorn-backed FastAPI server. Defaults: `127.0.0.1:8000`, single worker
 
 ## `memex client`
 
-Thin httpx wrapper that mirrors the read/write API surface. Reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and `MEMEX_API_TOKEN`.
+Thin httpx wrapper that mirrors the read/write API surface.
+
+Server selection (precedence: CLI flag > env var > default):
+
+| Knob          | Flag          | Env var            | Default                  |
+|---------------|---------------|--------------------|--------------------------|
+| Base URL      | `--url`, `-u` | `MEMEX_API_URL`    | `http://127.0.0.1:8000`  |
+| Bearer token  | `--token`     | `MEMEX_API_TOKEN`  | _(empty = no auth)_      |
+
+`--url` / `--token` are accepted at the `memex client` group level and apply
+to every subcommand invoked after them, e.g.
+`memex client --url http://host:8000 --token abc doc search "x"`.
 
 ```
+memex client [--url URL] [--token T]
 memex client status               [--json]
 memex client ctx QUERY            [--budget N] [-k K] [--write PATH]
                                   [--no-profile|--no-memories|--no-docs]
@@ -365,6 +377,11 @@ Local-only commands (`init`, `watch`, `cursor *`, `backup`, `restore`, `serve`) 
 Example: a Cursor subagent against a Docker deployment:
 
 ```bash
+# one-off:
+memex client --url https://memex.internal.example/ --token "$(pass show memex/api-token)" \
+  doc search "postgres tuning" -k 3
+
+# or pin once in the shell and let subcommands inherit it:
 export MEMEX_API_URL=https://memex.internal.example/
 export MEMEX_API_TOKEN=$(pass show memex/api-token)
 memex client doc search "postgres tuning" -k 3
