@@ -192,6 +192,13 @@ RUN groupadd -g 1000 memex \
 COPY --from=builder /opt/venv         /opt/venv
 COPY --from=builder /opt/memex/models /opt/memex/models
 
+# First-start entrypoint: drops a default $MEMEX_ROOT/memex.yaml when the
+# bind-mounted volume is empty so the container is usable out of the box
+# without a separate `memex init` step. See docker/entrypoint.sh for the
+# env vars that customise the written values.
+COPY docker/entrypoint.sh /usr/local/bin/memex-entrypoint
+RUN chmod +x /usr/local/bin/memex-entrypoint
+
 # ChromaDB hard-codes `Path.home() / ".cache" / "chroma" / "onnx_models"` for
 # its ONNX model lookup. Symlink it to the baked image location so no download
 # happens at runtime regardless of which uid the container actually runs as.
@@ -213,5 +220,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8000/healthz || exit 1
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# tini is PID 1; memex-entrypoint drops a default memex.yaml if absent and
+# then exec's CMD.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/memex-entrypoint"]
 CMD ["memex", "serve", "--host", "0.0.0.0", "--port", "8000"]
