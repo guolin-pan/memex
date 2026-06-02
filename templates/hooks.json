@@ -3,13 +3,13 @@
     "sessionStart": [
       {
         "name": "memex-profile",
-        "command": "memex client mem profile --write /tmp/cursor-memex-profile.md"
+        "command": "$HOME/.cursor/agents/memex-client.py mem profile --write /tmp/cursor-memex-profile.md"
       }
     ],
     "beforeSubmitPrompt": [
       {
         "name": "memex-ctx",
-        "command": "memex client ctx \"$CURSOR_USER_PROMPT\" --write /tmp/cursor-memex-ctx.md --budget 2000"
+        "command": "$HOME/.cursor/agents/memex-client.py ctx \"$CURSOR_USER_PROMPT\" --write /tmp/cursor-memex-ctx.md --budget 2000"
       }
     ]
   }

@@ -35,6 +35,9 @@ coverage.xml
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+# `memex cursor install-{rule,agents}` writes here when run with --scope project
+# (or `install-rule <this-repo>`). It's local-only operator config; don't commit.
+.cursor/
 .idea/
 *.swp
 *.swo

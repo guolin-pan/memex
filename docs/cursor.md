@@ -39,21 +39,20 @@ In one picture:
                   +------+------+                 |
                          |                        |
                          v                        v
-                       memex client (HTTP)
+                  ~/.cursor/agents/memex-client.py (HTTP)
                                   |
                                   v
                        memex server (memex serve / docker)
                                   ^
                                   |
-                  +---------------+----------------------+
-                  |  Project rule B                       |
-                  |  loaded into main agent's             |
-                  |  system prompt; reminds it            |
-                  |  to call `memex client doc search`    |
-                  |  / `memex client mem search` when     |
-                  |  the user asks knowledge-shaped       |
-                  |  questions                            |
-                  +---------------------------------------+
+                  +---------------+---------------------------+
+                  |  Project rule B                            |
+                  |  loaded into main agent's                  |
+                  |  system prompt; reminds it to call         |
+                  |  `~/.cursor/agents/memex-client.py doc     |
+                  |  search` / `... mem search` when the user  |
+                  |  asks knowledge-shaped questions           |
+                  +--------------------------------------------+
 ```
 
 ## Pick what you need
@@ -84,26 +83,31 @@ memex cursor install-hooks                       # default target ~/.cursor/hook
 memex cursor install-hooks --target ./project-hooks.json
 ```
 
-What it wires up (every command goes through `memex client` so the same hooks work whether memex is local or in a Docker container):
+What it wires up (every command goes through a **standalone stdlib-only
+script** dropped alongside the agents, so the hooks keep working whether you
+installed memex from this repo, from pipx, from `uv tool`, or not at all):
 
 ```
 +--------------------------+--------------------------------------------------+
 | lifecycle event          | command                                          |
 +--------------------------+--------------------------------------------------+
-| sessionStart             | memex client mem profile                         |
+| sessionStart             | $HOME/.cursor/agents/memex-client.py mem profile |
 |                          |   --write /tmp/cursor-memex-profile.md           |
-| beforeSubmitPrompt       | memex client ctx "$CURSOR_USER_PROMPT" \         |
+| beforeSubmitPrompt       | $HOME/.cursor/agents/memex-client.py ctx \       |
+|                          |   "$CURSOR_USER_PROMPT"                          |
 |                          |   --write /tmp/cursor-memex-ctx.md --budget 2000 |
 +--------------------------+--------------------------------------------------+
 ```
 
 The hook output (`/tmp/cursor-memex-ctx.md`) is the `<!-- BEGIN memex-context -->` block; Cursor inlines it into the prompt the LLM sees, so you never have to ask "do you remember…?".
 
-`memex client` reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and `MEMEX_API_TOKEN` from the environment. Set those in your shell rc (or `.envrc`) once and every hook / subagent inherits them.
+`$HOME/.cursor/agents/memex-client.py` is dropped automatically by `memex cursor install-hooks` / `install-rule` / `install-agents` (disable with `--no-install-client`, or refresh it explicitly with `memex cursor install-client`). The script depends only on the Python standard library, so it has no version coupling with the `memex` package on disk — a key property because PyPI hosts an unrelated package also called `memex` that `uv tool install memex` happily pulls in.
+
+The script reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and `MEMEX_API_TOKEN` from the environment, or accepts `--url` / `--token` flags. Set those env vars in your shell rc (or `.envrc`) once and every hook / subagent inherits them.
 
 > **Note:** the previous template also ran `memex mem learn --from-cursor-transcript` on `sessionEnd`. That command reads the transcript file on the local disk and has **no HTTP equivalent**, so it is no longer in the default template — it would break against a Docker-deployed memex. If you run memex locally and want it back, add the entry manually to `~/.cursor/hooks.json`.
 
-Cost: one `memex client ctx` call per user prompt. With the offline embedder + ChromaDB the round-trip is ~500 ms; with OpenAI it adds whatever the embeddings API takes.
+Cost: one `memex-client.py ctx` call per user prompt. With the offline embedder + ChromaDB the round-trip is ~500 ms; with OpenAI it adds whatever the embeddings API takes.
 
 To disable, delete the entries from `~/.cursor/hooks.json` or `memex cursor install-hooks --replace --force` and write a different file.
 
@@ -120,9 +124,9 @@ memex cursor install-rule .                      # writes .cursor/rules/memex.md
 The slimmed `memex.mdc` covers exactly two things for the main agent:
 
 1. How to read the auto-injected `<!-- BEGIN memex-context -->` block (use it directly; don't re-query).
-2. When to manually shell out for a quick read-only lookup (`memex client doc search`, `memex client mem search`).
+2. When to manually shell out for a quick read-only lookup (`~/.cursor/agents/memex-client.py doc search`, `~/.cursor/agents/memex-client.py mem search`).
 
-All write/maintenance operations are intentionally **delegated to the subagents** below — the main thread's rule explicitly tells the agent to NOT run `memex client doc add`, `memex client mem add`, `memex client doc rm`, etc.
+All write/maintenance operations are intentionally **delegated to the subagents** below — the main thread's rule explicitly tells the agent to NOT run `~/.cursor/agents/memex-client.py doc add`, `~/.cursor/agents/memex-client.py mem add`, `~/.cursor/agents/memex-client.py doc rm`, etc.
 
 Why bother if you already have hooks? Because hooks fire automatically with a single fixed budget; sometimes the agent needs a follow-up query (different angle, narrower tag filter). The rule licenses that.
 
@@ -161,7 +165,7 @@ Invoke from chat:
 /memex-curator   Check for stale or contradictory prefs.
 ```
 
-Each subagent runs in its **own Cursor context window**, with **its own system prompt** (see [`../templates/agents/`](../templates/agents/)) and (for `memex-ask`) `readonly: true` so it can't accidentally write. They use the shell tool to invoke `memex client` (the HTTP CLI; works against a local or Docker-deployed memex) and report results back to the main thread.
+Each subagent runs in its **own Cursor context window**, with **its own system prompt** (see [`../templates/agents/`](../templates/agents/)) and (for `memex-ask`) `readonly: true` so it can't accidentally write. They use the shell tool to invoke `~/.cursor/agents/memex-client.py` (the standalone stdlib-only HTTP script that ships alongside them; works against a local or Docker-deployed memex) and report results back to the main thread.
 
 ### Subagent file format
 
@@ -186,7 +190,7 @@ Cursor docs (as of writing) cover these five fields only — there's no per-suba
 
 ## Pointing the hooks / agents at the right server
 
-`memex client` (used by every shipped hook and subagent) resolves the server like this:
+`~/.cursor/agents/memex-client.py` (used by every shipped hook and subagent) resolves the server like this:
 
 1. `--url URL` / `-u URL` and `--token TOKEN` (CLI flags) — useful for one-offs.
 2. `MEMEX_API_URL` and `MEMEX_API_TOKEN` (env vars) — recommended for hooks/subagents, set once in your shell rc.
@@ -200,9 +204,15 @@ export MEMEX_API_TOKEN=$(pass show memex/api-token)
 
 If you need a per-subagent override (e.g. a curator that talks to a staging memex), edit `~/.cursor/agents/memex-curator.md` and pass `--url` / `--token` explicitly inside its commands.
 
-### Going back to a pure-local CLI
+### Refreshing the standalone script
 
-If you run memex **only** as a local process and don't want the HTTP hop, replace `memex client` with `memex` everywhere in `~/.cursor/hooks.json` and `~/.cursor/agents/memex-*.md`. The local-only commands that have no HTTP form (`memex mem learn --from-cursor-transcript`, `memex doc graph`, `memex mem update`) become available again.
+```bash
+memex cursor install-client --force      # overwrite ~/.cursor/agents/memex-client.py
+```
+
+### Going back to the in-package `memex client` (Typer) or pure-local `memex` CLI
+
+If you actually have the `memex` package installed properly on PATH and prefer it to the standalone script, replace `~/.cursor/agents/memex-client.py` with `memex client` (the Typer subcommand) everywhere in `~/.cursor/hooks.json` and `~/.cursor/agents/memex-*.md`. For a pure-local setup (no HTTP at all), use bare `memex` instead — that also brings back the local-only commands that have no HTTP form (`memex mem learn --from-cursor-transcript`, `memex doc graph`, `memex mem update`).
 
 ---
 

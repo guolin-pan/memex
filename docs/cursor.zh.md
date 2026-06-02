@@ -39,19 +39,19 @@ memex 通过**三条独立通道**接入 Cursor。它们各有所长，可以叠
                   +------+------+                 |
                          |                        |
                          v                        v
-                       memex client (HTTP)
+                  ~/.cursor/agents/memex-client.py (HTTP)
                                   |
                                   v
                        memex server (memex serve / docker)
                                   ^
                                   |
-                  +---------------+----------------------+
-                  |  项目规则  B                          |
-                  |  加载到主 agent 的 system             |
-                  |  prompt；提醒它在用户问知识           |
-                  |  类问题时调 `memex client doc search` |
-                  |  / `memex client mem search`          |
-                  +---------------------------------------+
+                  +---------------+---------------------------+
+                  |  项目规则  B                                |
+                  |  加载到主 agent 的 system prompt；提醒它    |
+                  |  在用户问知识类问题时调                     |
+                  |  `~/.cursor/agents/memex-client.py doc      |
+                  |  search` / `... mem search`                |
+                  +--------------------------------------------+
 ```
 
 ## 按需挑
@@ -80,26 +80,29 @@ memex cursor install-hooks                       # 默认目标 ~/.cursor/hooks.
 memex cursor install-hooks --target ./project-hooks.json
 ```
 
-接进的内容（每条命令都走 `memex client`，所以 memex 部署在本地或 Docker 都一样能用）：
+接进的内容（每条命令都走 hooks/agents 一起装下来的**只用 stdlib 的独立脚本**，跟 `memex` 包是否装好、是否在 PATH 上**完全解耦**）：
 
 ```
 +--------------------------+--------------------------------------------------+
 | 生命周期事件              | 命令                                              |
 +--------------------------+--------------------------------------------------+
-| sessionStart             | memex client mem profile                         |
+| sessionStart             | $HOME/.cursor/agents/memex-client.py mem profile |
 |                          |   --write /tmp/cursor-memex-profile.md           |
-| beforeSubmitPrompt       | memex client ctx "$CURSOR_USER_PROMPT" \         |
+| beforeSubmitPrompt       | $HOME/.cursor/agents/memex-client.py ctx \       |
+|                          |   "$CURSOR_USER_PROMPT"                          |
 |                          |   --write /tmp/cursor-memex-ctx.md --budget 2000 |
 +--------------------------+--------------------------------------------------+
 ```
 
 Hook 的输出（`/tmp/cursor-memex-ctx.md`）就是那个 `<!-- BEGIN memex-context -->` 块；Cursor 会内联到 LLM 看到的 prompt 里，所以你永远不需要问"你还记得……吗？"。
 
-`memex client` 读 `MEMEX_API_URL`（默认 `http://127.0.0.1:8000`）和 `MEMEX_API_TOKEN`。把它们设进 shell rc（或 `.envrc`）一次，每个 hook / subagent 都会继承。
+`$HOME/.cursor/agents/memex-client.py` 由 `memex cursor install-hooks` / `install-rule` / `install-agents` 顺带落地（用 `--no-install-client` 关闭，或用 `memex cursor install-client` 单独刷新）。脚本只用 Python 标准库，跟磁盘上有没有 `memex` 包**完全没关系**——这一点很关键，因为 PyPI 上还有个同名的、无关的 `memex` 包会被 `uv tool install memex` 误装上。
+
+脚本读 `MEMEX_API_URL`（默认 `http://127.0.0.1:8000`）和 `MEMEX_API_TOKEN`，或接受 `--url` / `--token` 标志。把这两个环境变量设进 shell rc（或 `.envrc`）一次，每个 hook / subagent 都会继承。
 
 > **注意**：旧模板还有一条 `sessionEnd` 跑 `memex mem learn --from-cursor-transcript`。这个命令读本地 transcript 文件，**没有 HTTP 对应实现**，所以默认模板里已经移除——保留它会让 Docker 部署直接报错。如果你跑的是本地 memex 想要这条 hook 回来，自己在 `~/.cursor/hooks.json` 里加上即可。
 
-成本：每条用户 prompt 触发一次 `memex client ctx`。离线 embedder + ChromaDB 的话往返 ~500 ms；用 OpenAI 会加上 embeddings API 的耗时。
+成本：每条用户 prompt 触发一次 `memex-client.py ctx`。离线 embedder + ChromaDB 的话往返 ~500 ms；用 OpenAI 会加上 embeddings API 的耗时。
 
 禁用：删 `~/.cursor/hooks.json` 里的相关条目，或 `memex cursor install-hooks --replace --force` 写新文件。
 
@@ -116,9 +119,9 @@ memex cursor install-rule .                      # 写到 .cursor/rules/memex.md
 精简后的 `memex.mdc` 给主 agent 讲两件事：
 
 1. 如何使用自动注入的 `<!-- BEGIN memex-context -->` 块（直接用，别重新查）。
-2. 什么时候手动 shell 出去做轻量只读查询（`memex client doc search`、`memex client mem search`）。
+2. 什么时候手动 shell 出去做轻量只读查询（`~/.cursor/agents/memex-client.py doc search`、`~/.cursor/agents/memex-client.py mem search`）。
 
-所有写入 / 维护操作都被**显式委派给下面的 subagents**——主线规则明确告诉 agent **不要**跑 `memex client doc add`、`memex client mem add`、`memex client doc rm` 等。
+所有写入 / 维护操作都被**显式委派给下面的 subagents**——主线规则明确告诉 agent **不要**跑 `~/.cursor/agents/memex-client.py doc add`、`~/.cursor/agents/memex-client.py mem add`、`~/.cursor/agents/memex-client.py doc rm` 等。
 
 既然已经有 hooks，为什么还需要规则？因为 hooks 是定额触发的；有时 agent 需要再做一次跟进查询（换个角度、加更窄的 tag 过滤）。规则给它"许可"。
 
@@ -155,7 +158,7 @@ memex cursor install-agents --only memex-ask                      # 只装一个
 /memex-curator   检查一下有没有过期或冲突的 pref。
 ```
 
-每个 subagent 跑在**它自己的 Cursor 上下文窗口**里，有**自己的 system prompt**（看 [`../templates/agents/`](../templates/agents/)），`memex-ask` 还设了 `readonly: true` 防止误写。它们用 shell 工具调 `memex client`（走 HTTP，本地 / Docker 部署都通），结果回到主线程。
+每个 subagent 跑在**它自己的 Cursor 上下文窗口**里，有**自己的 system prompt**（看 [`../templates/agents/`](../templates/agents/)），`memex-ask` 还设了 `readonly: true` 防止误写。它们用 shell 工具调 `~/.cursor/agents/memex-client.py`（跟它们一起装的独立 stdlib 脚本，走 HTTP，本地 / Docker 部署都通），结果回到主线程。
 
 ### Subagent 文件格式
 
@@ -180,7 +183,7 @@ Cursor 文档（截至本文）只支持这五个字段——没有 per-subagent
 
 ## 让 hooks / agents 指向正确的服务端
 
-`memex client`（被所有出厂 hook 和 subagent 使用）的服务端解析优先级：
+`~/.cursor/agents/memex-client.py`（被所有出厂 hook 和 subagent 使用）的服务端解析优先级：
 
 1. `--url URL` / `-u URL` 和 `--token TOKEN`（CLI 标志）—— 适合一次性。
 2. `MEMEX_API_URL` 和 `MEMEX_API_TOKEN`（环境变量）—— 推荐给 hooks/subagents 用，在 shell rc 里设一次。
@@ -194,9 +197,15 @@ export MEMEX_API_TOKEN=$(pass show memex/api-token)
 
 如果某个 subagent 需要单独的 URL/token（比如让 curator 指向 staging memex），编辑 `~/.cursor/agents/memex-curator.md`，把 `--url` / `--token` 显式写到命令里。
 
-### 退回到纯本地 CLI
+### 刷新独立脚本
 
-如果 memex **只**作为本地进程跑，不想多走一次 HTTP，把 `~/.cursor/hooks.json` 和 `~/.cursor/agents/memex-*.md` 里的 `memex client` 全部替换成 `memex` 即可。这样 `memex mem learn --from-cursor-transcript`、`memex doc graph`、`memex mem update` 这些**没有 HTTP 对应**的本地命令也能用回来。
+```bash
+memex cursor install-client --force      # 覆盖 ~/.cursor/agents/memex-client.py
+```
+
+### 退回到包内的 `memex client`（Typer 子命令）或纯本地 `memex`
+
+如果 `memex` 包已经正确装在 PATH 上、你也更想用它而不是独立脚本，把 `~/.cursor/hooks.json` 和 `~/.cursor/agents/memex-*.md` 里的 `~/.cursor/agents/memex-client.py` 全部替换成 `memex client`（包里的 Typer 子命令）即可。完全本地、不走 HTTP 的话，换成裸 `memex`——这样 `memex mem learn --from-cursor-transcript`、`memex doc graph`、`memex mem update` 这些**没有 HTTP 对应**的本地命令也能用回来。
 
 ---
 
