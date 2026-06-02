@@ -1,0 +1,63 @@
+# memex — production-ish docker-compose with a persistent data volume.
+#
+# Quick start:
+#   1) cp .env.example .env       # set MEMEX_API_TOKEN, OPENAI_API_KEY (if used), etc.
+#   2) docker compose up -d
+#   3) curl http://localhost:8000/healthz
+#
+# Bring your own memex.yaml:
+#   - The first start populates ./data/memex.yaml from the OpenAI default profile.
+#   - To use the offline + Ollama profile, drop your own ./data/memex.yaml in
+#     before bringing the service up (or shell into the container and run
+#     `memex init --profile local --force`).
+
+services:
+  memex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Bake offline models into the image (~1.4 GB total). Set to 0 for a
+        # slim image (~500 MB) when you'll only use the openai cloud profile.
+        WITH_LOCAL_MODELS: "${WITH_LOCAL_MODELS:-1}"
+    image: memex:latest
+    container_name: memex
+    restart: unless-stopped
+    ports:
+      - "${MEMEX_PORT:-8000}:8000"
+    environment:
+      # API root inside the container — must match the mounted volume target.
+      MEMEX_ROOT: /data
+      # Optional bearer token. Leave empty for an open localhost deployment.
+      MEMEX_API_TOKEN: "${MEMEX_API_TOKEN:-}"
+      # Forwarded to mem0 / OpenAI client when the profile uses them.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # Image bakes offline models at /opt/memex/models and sets HF_HOME +
+      # *_OFFLINE flags itself. Do NOT override here unless you built with
+      # WITH_LOCAL_MODELS=0 or want to pull a different HF model at runtime:
+      #   HF_HUB_OFFLINE: "0"
+      #   TRANSFORMERS_OFFLINE: "0"
+      #   HF_HOME: /data/.cache/hf       # then put models on the volume
+    volumes:
+      # Persistent data: docs/, .cache/chroma, .cache/mem0, .cache/history.
+      - ./data:/data
+      # Optional: mount your local memex.yaml without touching the rest.
+      # - ./data/memex.yaml:/data/memex.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Optional: an Ollama sidecar if you want a fully offline LLM. Uncomment to
+  # use it, then set llm.base_url=http://ollama:11434/v1 in your memex.yaml.
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./ollama:/root/.ollama

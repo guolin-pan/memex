@@ -1,0 +1,63 @@
+# --- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+.installed.cfg
+
+# --- Virtual environments -----------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- Test / lint / coverage caches --------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- IDE / editor / OS ---------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- memex runtime artifacts --------------------------------------------
+# Docker bind-mount target for the persistent data volume.
+/data/
+
+# Anything dropped under a top-level .cache by accident (chroma/mem0/hf).
+/.cache/
+
+# Local backups, sims, scratch test roots.
+*.tar.gz
+/tmp-memex-*/
+/repro-*.sh
+
+# Real secrets live in .env (committed: .env.example template only).
+.env
+.env.local
+.env.*.local
+
+# uv lock file is generated; commit only if you use uv.
+# Comment the next line out if you adopt uv as the canonical lockfile.
+uv.lock
+
+# Generated agent transcripts / terminal dumps (Cursor uses /tmp paths).
+*.transcript.md

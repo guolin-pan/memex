@@ -1,0 +1,40 @@
+# memex config — fully local profile.
+#
+# - Vectorization: offline ONNX MiniLM (downloaded once by ChromaDB to its
+#   own cache; no external API after that). Same model is used by mem0 (via
+#   HuggingFace backend) so both indices share the same embedding space.
+# - LLM: any OpenAI-compatible HTTP endpoint. Defaults below point at an
+#   Ollama server exposing the /v1 OpenAI-compat surface (Ollama enables
+#   this automatically on `ollama serve`). Change `model` / `base_url` /
+#   `api_key` as needed.
+
+user_id: {USER_ID}
+
+embedder:
+  provider: chroma-default          # offline ONNX all-MiniLM-L6-v2, no API key
+  model: all-MiniLM-L6-v2
+
+llm:
+  provider: openai                  # talks OpenAI v1 protocol
+  model: qwen3:4b                   # whatever model is loaded on your server
+  temperature: 0.1
+  base_url: http://10.242.29.48:11434/v1
+  api_key: no-key                   # placeholder; Ollama ignores it but the SDK requires a non-empty string
+
+chunking:
+  target_tokens: 800
+  overlap_tokens: 100
+  min_chunk_tokens: 50
+  split_by_headings: [h2, h3]
+
+search:
+  top_k_docs: 5
+  top_k_mems: 5
+  hybrid_alpha: 0.5                 # 1.0 = pure vector, 0.0 = pure BM25
+  min_score: 0.0
+
+ctx:
+  budget_tokens: 2000
+  include_profile: true
+  include_memories: true
+  include_docs: true

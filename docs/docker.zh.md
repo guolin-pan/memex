@@ -1,0 +1,235 @@
+# Docker 部署
+
+这是简洁版。完整的运维手册（多机部署、故障排查矩阵、Ollama 边车配线、完整端点表）在 [`../DOCKER.md`](../DOCKER.md)。
+
+## 一图看完
+
+```
++-------------------+         +-------------------------------------------+
+|  调用方 (LLM、     |  HTTP   |  memex 容器                                |
+|  Cursor agent、   | ------> |  uvicorn :8000                            |
+|  CI 机器人、curl)  |         |                                           |
++-------------------+         |  /opt/memex/models/   <-- 镜像构建时烤进   |
+                              |     chroma/onnx_models/...                |
+                              |     hf/hub/...sentence-transformers...    |
+                              |                                           |
+                              |  /data/             <-- 宿主机卷           |
+                              |     docs/                                 |
+                              |     memex.yaml                            |
+                              |     .cache/chroma/   (你的向量)            |
+                              |     .cache/mem0/     (qdrant + history)   |
+                              +-------------------------------------------+
+                                              |
+                                              v
+                                        host: ./data/
+```
+
+两样东西在动：
+
+- **镜像**（不可变）：代码 + venv + 离线模型。只有 build 内容变化时才重建。
+- **卷**（宿主机 `./data`）：通过运行中的容器产生的所有东西。
+
+## 构建
+
+```bash
+cd memex/
+cp .env.example .env                          # 设 MEMEX_API_TOKEN、OPENAI_API_KEY 等
+docker compose build                          # 首次 ~5-10 分钟
+```
+
+### 两个变体
+
+```
++----------------------------+----------+----------------------+-------------------------------+
+| variant                    | 大小      | 运行时网络?           | 何时用                         |
++----------------------------+----------+----------------------+-------------------------------+
+| WITH_LOCAL_MODELS=1        | ~1.1 GB  | 无                    | 自托管、离线、私有 LLM、内网    |
+| (默认)                     |          |                      |                                |
++----------------------------+----------+----------------------+-------------------------------+
+| WITH_LOCAL_MODELS=0        | ~500 MB  | 有 (首次会下载 ONNX +| 只用 openai 云 profile、       |
+|                            |          | HF 模型)              | 对镜像大小敏感                  |
++----------------------------+----------+----------------------+-------------------------------+
+```
+
+`WITH_LOCAL_MODELS=1` 时被烤进镜像的东西：
+
+| Bundle | 大小 | 用途 |
+|---|---|---|
+| CPU-only PyTorch（PyTorch 的 CPU wheel index） | ~180 MB | sentence-transformers |
+| sentence-transformers 包 | ~10 MB | mem0 的 HuggingFace embedder |
+| ChromaDB ONNX `all-MiniLM-L6-v2` | ~165 MB | wiki 向量层（`embedder.provider: chroma-default` 时） |
+| HF `sentence-transformers/all-MiniLM-L6-v2`（只拉 safetensors，跳过冗余的 PyTorch/TF/Rust/ONNX/OpenVINO 格式） | ~90 MB | mem0 的 HF embedder |
+
+要构建瘦身版：
+
+```bash
+WITH_LOCAL_MODELS=0 docker compose build
+# 或裸 docker：
+docker build --build-arg WITH_LOCAL_MODELS=0 -t memex:slim .
+```
+
+## 运行
+
+```bash
+docker compose up -d
+curl -fsS http://localhost:8000/healthz       # 存活探针
+open http://localhost:8000/docs               # OpenAPI / Swagger UI
+```
+
+默认对外端口 `8000`，改 `.env` 里的 `MEMEX_PORT`：
+
+```bash
+MEMEX_PORT=18000 docker compose up -d
+```
+
+## 配置
+
+如果卷里没有 `memex.yaml`，容器会用 `openai` profile 启；切到 local profile 直接改 `./data/memex.yaml`：
+
+```yaml
+embedder:
+  provider: chroma-default
+  model: all-MiniLM-L6-v2
+llm:
+  provider: openai
+  model: qwen3:4b
+  base_url: http://10.242.29.48:11434/v1
+  api_key: no-key
+```
+
+或者在容器里重置：
+
+```bash
+docker compose exec memex memex init --profile local --force
+```
+
+## 持久化
+
+所有需要在重启后保留的东西都放在宿主机 `./data`：
+
+```
+./data/
+   docs/                    <-- 你的 markdown wiki（.cache/ 要 gitignore）
+   memex.yaml               <-- 配置
+   .cache/
+      chroma/               <-- 向量索引（MB-GB 级）
+      mem0/                 <-- qdrant + history.db
+      history/              <-- tombstones、审计日志
+```
+
+备份：
+
+```bash
+docker compose exec memex memex backup -o /data/snap-$(date +%F).tar.gz
+# 或在宿主机上：
+tar czf memex-backup.tar.gz -C ./data .
+```
+
+恢复（到一个新容器）：
+
+```bash
+docker compose down
+rm -rf ./data && mkdir ./data && tar xzf memex-backup.tar.gz -C ./data
+docker compose up -d
+```
+
+## 鉴权
+
+```bash
+# .env
+MEMEX_API_TOKEN=$(openssl rand -hex 32)
+```
+
+设了之后除 `/healthz` 外的所有端点都强制要求 `Authorization: Bearer <token>`。容器自己的 healthcheck 不受影响（它打的就是 `/healthz`）。
+
+## 一键构建 + 端到端测试
+
+一个脚本。构建 -> 镜像内省 -> 启动 -> 跑全套 API -> 重启 -> 验证持久化：
+
+```bash
+bash scripts/docker-build-test.sh                       # 完整构建 + 测试
+FAST=1 bash scripts/docker-build-test.sh               # 镜像存在则跳过构建
+WITH_LOCAL_MODELS=0 bash scripts/docker-build-test.sh   # 构建瘦身版
+```
+
+最后会打印 `PASS / FAIL` 计数。脚本本身就是完整 checklist。
+
+## 日常运维
+
+```bash
+# 看日志
+docker compose logs -f memex
+
+# 进容器
+docker compose exec memex bash
+
+# 在容器里跑本地 CLI（作用于同一份 /data）
+docker compose exec memex memex status
+docker compose exec memex memex doc ls
+docker compose exec memex memex doc reindex --changed
+
+# stop / start / restart
+docker compose stop
+docker compose start
+docker compose restart memex
+
+# 关掉容器（保留 ./data）
+docker compose down
+
+# 关掉容器 + 删数据（破坏性）
+docker compose down -v && rm -rf ./data
+```
+
+## 把 Cursor subagent 接到 Docker 部署
+
+如果你的 KB 在 Docker 里（开发机和笔记本共享，或服务器上加 token），把本地 Cursor 指过去：
+
+```bash
+# 在跑 Cursor 的开发机上：
+pipx install <memex-repo-路径>            # 或在 repo 里 `pip install -e .`
+
+# 指向部署
+export MEMEX_API_URL=http://<host>:8000
+export MEMEX_API_TOKEN=...                # 如果设了的话
+
+# 验证
+memex client status
+
+# 然后要么把 memex 别名成 memex client：
+alias memex='memex client'
+# ... 要么在每个 ~/.cursor/agents/memex-*.md 顶部加一行：
+#     "本 agent 里所有 `memex ...` 调用都通过 `memex client ...` 走。"
+```
+
+## 边车 Ollama（可选）
+
+`docker-compose.yml` 自带一段注释掉的 Ollama 服务。打开后 `memex` 服务就能在 compose 网络里以 `http://ollama:11434/v1` 访问它——不需要在宿主机暴露端口。
+
+```yaml
+# 在 docker-compose.yml 里取消注释
+ollama:
+  image: ollama/ollama:latest
+  container_name: ollama
+  restart: unless-stopped
+  ports:
+    - "11434:11434"
+  volumes:
+    - ./ollama:/root/.ollama
+```
+
+然后在 `./data/memex.yaml` 里：
+
+```yaml
+llm:
+  provider: openai
+  model: qwen3:4b
+  base_url: http://ollama:11434/v1
+  api_key: no-key
+```
+
+## 排错
+
+完整表在 [`../DOCKER.md`](../DOCKER.md) 末尾。两个最常见的坑：
+
+- **`/data` permission denied** —— 容器里用户的 uid 是 1000。如果宿主机目录属主不是 1000，跑一次 `chown -R 1000:1000 ./data`，或在 build 时用 `--build-arg` 改 uid。
+- **某个 HF 模型报 `OSError: ... offline mode`** —— 你用 `WITH_LOCAL_MODELS=0` 构建的。要么重建为 `=1`，要么运行时加 `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0`（首次请求会从网络拉）。

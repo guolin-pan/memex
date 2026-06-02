@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memex"
+version = "0.1.0"
+description = "Personal assistant + Markdown knowledge base on top of mem0 (OSS) and ChromaDB, integrated with Cursor via hooks and rules."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "memex authors" }]
+keywords = ["mem0", "chromadb", "rag", "cursor", "knowledge-base", "personal-assistant"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    # CLI / TUI
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    # Config + markdown
+    "pyyaml>=6.0.1",
+    "python-frontmatter>=1.1.0",
+    "markdown-it-py>=3.0.0",
+    "python-ulid>=2.2.0",
+    "python-dateutil>=2.9.0",
+    # Filesystem watcher
+    "watchdog>=4.0.0",
+    # Vector store + memory layer
+    "chromadb>=0.5.0",
+    "mem0ai>=0.1.50",
+    # Tokenization + sparse retrieval
+    "tiktoken>=0.7.0",
+    "rank-bm25>=0.2.2",
+    # HTTP server (`memex serve`) and client (`memex client`)
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# Offline embeddings via sentence-transformers (pulls in torch ≈ 800 MB).
+local = [
+    "sentence-transformers>=2.7.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+memex = "memex.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memex*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+memex = ["../templates/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+# B008: Typer's idiomatic API is to call typer.Option/Argument as defaults.
+# E501: line length handled by formatter; long help strings are fine.
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
