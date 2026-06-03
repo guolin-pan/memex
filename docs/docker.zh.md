@@ -51,6 +51,19 @@ docker compose build                          # 首次 ~5-10 分钟
 | spaCy `en_core_web_sm`（`python -m spacy download` 安装到 `/opt/venv`）                         | mem0 词形还原 / 实体抽取（`mem0ai[nlp]`） |
 | tiktoken `cl100k_base` BPE 文件，位于 `/opt/memex/models/tiktoken/`                              | memex 分块 / token 计数 |
 
+### 增量构建
+
+Dockerfile 故意拆成三段，**一次普通的源码改动重建只要 ~40 秒，而不是 25 分钟**：
+
+| 阶段 | 做什么                                          | 缓存命中键                | 何时失效            |
+|------|------------------------------------------------|---------------------------|---------------------|
+| A    | 用 stub 版 `memex/__init__.py` 让 pip 装齐所有依赖（不碰真源码）| `pyproject.toml`、`README.md` | 改依赖时           |
+| B    | 预热所有模型（HF MiniLM、spaCy、ChromaDB ONNX、fastembed、tiktoken）| 同 A                     | 改依赖时           |
+| C    | `COPY memex/` + `templates/` + `pip install --no-deps .` | `memex/`、`templates/`    | 每次改源码（~5s）  |
+
+BuildKit cache mount 还把 pip 的 `~/.cache/pip` 和 apt 的 `/var/cache/apt` 在
+不同构建之间持久化，即便 `pyproject.toml` 改动触发全量重建，下载步骤也能复用缓存。
+
 ## 运行
 
 ```bash

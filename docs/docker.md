@@ -53,6 +53,20 @@ for model files. Image size (~1.5-2 GB) is the explicit, accepted cost.
 | spaCy `en_core_web_sm` (installed into `/opt/venv` via `python -m spacy download`)              | mem0 lemmatization + entity extraction (`mem0ai[nlp]`) |
 | tiktoken `cl100k_base` BPE blob at `/opt/memex/models/tiktoken/`                                | memex chunking / token counting |
 
+### Incremental builds
+
+The Dockerfile is split so a **routine source edit rebuilds in ~40 s, not 25 min**.
+
+| Stage | Job                                            | Cache key                | When it re-runs       |
+|-------|------------------------------------------------|--------------------------|------------------------|
+| A     | install every Python dep (using a stub memex package so source edits don't bust this layer) | `pyproject.toml`, `README.md` | dep changes            |
+| B     | pre-warm every model (HF MiniLM, spaCy, ChromaDB ONNX, fastembed, tiktoken) | same as A                | dep changes            |
+| C     | `COPY memex/` + `templates/`, `pip install --no-deps .` | `memex/`, `templates/`   | every source edit (~5s) |
+
+BuildKit cache mounts also keep pip's `~/.cache/pip` and apt's `/var/cache/apt`
+alive across builds, so even a full rebuild after `pyproject.toml` changes
+skips the slow downloads.
+
 ## Run
 
 ```bash

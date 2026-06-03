@@ -8,9 +8,21 @@
 # explicit, accepted cost — we trade ~1-2 GB on disk for guaranteed offline
 # operation.
 #
-# Two-stage build:
-#   1. builder  — installs deps into a venv AND pre-downloads every model.
-#   2. runtime  — copies the venv + models + non-root user, runs uvicorn.
+# Layer-cache strategy:
+#   A. Install Python deps using a *stub* `memex/__init__.py` so pip's
+#      dependency resolution doesn't see (and thus doesn't rebuild from)
+#      the actual source tree. Cache key: pyproject.toml + README.md.
+#   B. Pre-warm every model. Cache key: same as A.
+#   C. COPY the real `memex/` and `templates/`, then `pip install --no-deps`
+#      to drop the project into the already-built venv.
+#
+# Routine source edits invalidate ONLY stage C (a few seconds). torch / HF
+# MiniLM / spaCy / fastembed / tiktoken stay cached. pyproject.toml changes
+# bust everything from A down — that's the right trade.
+#
+# BuildKit cache mounts (--mount=type=cache,target=/root/.cache/pip etc.)
+# keep pip/apt downloads alive across builds even when the layer rebuilds,
+# so cold caches recover quickly too.
 #
 # Runtime contract:
 #   - Data lives in /data (mount a host volume here for persistence).
@@ -44,88 +56,102 @@ ARG no_proxy=localhost,127.0.0.1
 
 # Bake the same cache locations that the runtime will use so every model
 # pre-download lands inside /opt/memex/models and can be COPY'd unchanged.
+# PIP_NO_CACHE_DIR is deliberately *not* set — we want pip to use its cache,
+# which lives on a BuildKit cache mount (see the pip RUN below) and survives
+# across builds.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HOME=/opt/memex/models/hf \
     FASTEMBED_CACHE_PATH=/opt/memex/models/fastembed \
     TIKTOKEN_CACHE_DIR=/opt/memex/models/tiktoken
 
 # Build tools for native wheels (chromadb pulls in compiled deps on some archs).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential git curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+# apt caches go on BuildKit cache mounts so we don't re-download every time.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends build-essential git curl ca-certificates
 
 WORKDIR /build
 
-# Layer the install: copy only the project metadata first so requirement changes
-# don't bust the cache when source files change.
+# -----------------------------------------------------------------------------
+# Stage A — Python dependencies (cache key: pyproject.toml + README.md)
+#
+# `pip install .` needs *some* `memex/__init__.py` to exist or setuptools
+# bails. We write a stub, resolve every transitive dep, then uninstall the
+# stub. The real package goes in via stage C. Touching memex/*.py in normal
+# dev DOES NOT bust this layer.
+# -----------------------------------------------------------------------------
 COPY pyproject.toml README.md ./
-COPY memex ./memex
-COPY templates ./templates
 
-# Install order matters:
-#   1. Create venv + bump pip/wheel.
-#   2. Install CPU-only torch FIRST from the CPU wheel index. Otherwise
-#      `pip install .` would resolve sentence-transformers → torch and pull
-#      the ~800 MB CUDA wheel from the default PyPI index.
-#   3. `pip install .` brings in the project itself + every core dep
-#      (chromadb, mem0ai[nlp] = spacy, sentence-transformers, fastembed,
-#      tiktoken, fastapi, uvicorn, ...). torch already satisfied → skipped.
-RUN python -m venv /opt/venv \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p memex templates \
+ && printf '__version__ = "0.0.0"\n' > memex/__init__.py \
+ && touch templates/.keep \
+ && python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip wheel \
+ # CPU-only torch first so sentence-transformers stays on the CPU wheel.
+ # Without this, `pip install .` would pull the 800 MB CUDA wheel from PyPI.
  && /opt/venv/bin/pip install --index-url "$TORCH_INDEX_URL" "torch>=2.0,<3" \
- && /opt/venv/bin/pip install .
+ # Now resolve all of memex's transitive deps using the stub package.
+ && /opt/venv/bin/pip install . \
+ # Drop the stub from site-packages so stage C does a clean install of the
+ # real source. Dependencies stay installed because pip uninstall only
+ # removes the named distribution, not its requirements.
+ && /opt/venv/bin/pip uninstall -y memex \
+ && rm -rf memex templates
 
 # -----------------------------------------------------------------------------
-# Pre-warm every model that mem0 / ChromaDB / sentence-transformers / fastembed
-# / spaCy / tiktoken may try to fetch at runtime. After this stage,
-# /opt/memex/models/ is self-sufficient.
+# Stage B — Pre-warm every model (cache key: same as Stage A)
+#
+# Each model is its own RUN so a transient failure can be retried without
+# re-running the others. After this stage, /opt/memex/models/ is
+# self-sufficient and the runtime makes zero outbound calls.
 # -----------------------------------------------------------------------------
 RUN mkdir -p /opt/memex/models/hf \
              /opt/memex/models/chroma \
              /opt/memex/models/fastembed \
              /opt/memex/models/tiktoken
 
-# 1) spaCy en_core_web_sm — mem0/utils/spacy_models.py loads this for both
-#    lemma and "full" passes (lemma / NER / dep parse). Installed as a Python
-#    package into the venv, so it travels with the /opt/venv copy in stage 2.
-RUN echo ">>> downloading spaCy en_core_web_sm ..." \
- && /opt/venv/bin/python -m spacy download en_core_web_sm \
+# spaCy en_core_web_sm — mem0/utils/spacy_models.py loads this. Installed
+# as a Python package into the venv, so it travels with /opt/venv.
+RUN /opt/venv/bin/python -m spacy download en_core_web_sm \
  && /opt/venv/bin/python -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy en_core_web_sm OK')"
 
-# 2) ChromaDB ONNX all-MiniLM-L6-v2 — ChromaDB hardcodes
-#    Path.home() / .cache / chroma / onnx_models / ... for its bundled default
-#    embedder. Warm it up under /root and shift the directory into
-#    /opt/memex/models/chroma so the runtime stage can mount it at a stable
-#    location.
-RUN echo ">>> warming up ChromaDB ONNX MiniLM ..." \
- && /opt/venv/bin/python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['warm up']); print('ChromaDB ONNX MiniLM OK')" \
+# ChromaDB ONNX all-MiniLM-L6-v2 — ChromaDB hardcodes
+# Path.home() / .cache / chroma / onnx_models / ... for lookup; we warm it
+# under /root and shift the directory into /opt/memex/models/chroma so the
+# runtime stage can symlink it at a stable location.
+RUN /opt/venv/bin/python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; DefaultEmbeddingFunction()(['warm up']); print('ChromaDB ONNX MiniLM OK')" \
  && cp -r /root/.cache/chroma /opt/memex/models/chroma_src \
  && mv /opt/memex/models/chroma_src/onnx_models /opt/memex/models/chroma/onnx_models \
  && rm -rf /opt/memex/models/chroma_src
 
-# 3) HuggingFace sentence-transformers/all-MiniLM-L6-v2 — full snapshot. mem0's
-#    "huggingface" embedder backend (selected when our config uses
-#    chroma-default / sentence-transformers) loads this via SentenceTransformer.
-RUN echo ">>> downloading sentence-transformers/all-MiniLM-L6-v2 (full snapshot) ..." \
- && /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/all-MiniLM-L6-v2'); print('HF MiniLM full snapshot OK')"
+# HuggingFace sentence-transformers/all-MiniLM-L6-v2 — full snapshot.
+RUN /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/all-MiniLM-L6-v2'); print('HF MiniLM full snapshot OK')"
 
-# 4) fastembed Qdrant/bm25 — mem0/vector_stores/qdrant.py lazily loads this
-#    SparseTextEmbedding for BM25 keyword search. Pre-warm so the model files
-#    land in $FASTEMBED_CACHE_PATH.
-RUN echo ">>> downloading fastembed Qdrant/bm25 ..." \
- && /opt/venv/bin/python -c "from fastembed import SparseTextEmbedding; m = SparseTextEmbedding(model_name='Qdrant/bm25'); list(m.embed(['warm up'])); print('fastembed Qdrant/bm25 OK')"
+# fastembed Qdrant/bm25 — mem0/vector_stores/qdrant.py lazy-loads this.
+RUN /opt/venv/bin/python -c "from fastembed import SparseTextEmbedding; m = SparseTextEmbedding(model_name='Qdrant/bm25'); list(m.embed(['warm up'])); print('fastembed Qdrant/bm25 OK')"
 
-# 5) tiktoken cl100k_base — memex/core/utils.py uses tiktoken.get_encoding('cl100k_base')
-#    for chunking / token counting. tiktoken fetches the BPE blob over HTTP
-#    on first use unless TIKTOKEN_CACHE_DIR is populated; pre-warm it so the
-#    blob is on disk before runtime.
-RUN echo ">>> warming up tiktoken cl100k_base ..." \
- && /opt/venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base').encode('warm up'); print('tiktoken cl100k_base OK')"
+# tiktoken cl100k_base — memex/core/utils.py token counting.
+RUN /opt/venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base').encode('warm up'); print('tiktoken cl100k_base OK')"
 
 RUN echo ">>> baked model sizes:" && du -sh /opt/memex/models/*
+
+# -----------------------------------------------------------------------------
+# Stage C — install the actual project (cache key: memex/ + templates/)
+#
+# This is the ONLY layer that re-runs for a routine source change. The
+# package metadata stayed the same, so deps are unchanged; we just drop
+# our code into site-packages via `--no-deps` and we're done.
+# -----------------------------------------------------------------------------
+COPY memex ./memex
+COPY templates ./templates
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/venv/bin/pip install --no-deps .
 
 # ============================================================================
 # Stage 2 — runtime
@@ -180,9 +206,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TORCHINDUCTOR_CACHE_DIR=/tmp/torch-inductor
 
 # Minimal runtime deps. git for `memex init`'s `git init`; tini for proper PID 1.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends git tini ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends git tini ca-certificates curl
 
 # Non-root user. UID/GID 1000 matches most dev hosts.
 RUN groupadd -g 1000 memex \

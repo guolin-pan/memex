@@ -101,6 +101,26 @@ After the first start, `./data/` on the host is populated with:
 └── .cache/              # chroma + mem0 storage (gitignore this!)
 ```
 
+### Build caching — why source edits rebuild in seconds, not minutes
+
+The Dockerfile is structured into three layered stages inside the builder
+so an everyday code change rebuilds in **~40 seconds** instead of repeating
+the full ~25 min model-download dance:
+
+| Stage | What it does                                                                                                | Cache key                |
+|-------|-------------------------------------------------------------------------------------------------------------|--------------------------|
+| **A** | Resolve and install every Python dependency (`torch` CPU, `chromadb`, `sentence-transformers`, `mem0ai[nlp]`, `fastembed`, `tiktoken`, …) using a *stub* `memex/__init__.py` so pip never sees your source tree | `pyproject.toml`, `README.md` |
+| **B** | Pre-warm every model: spaCy `en_core_web_sm`, ChromaDB ONNX, HF `all-MiniLM-L6-v2` (full snapshot), fastembed `Qdrant/bm25`, tiktoken `cl100k_base` | same as A             |
+| **C** | `COPY memex/` + `COPY templates/` + `pip install --no-deps .` — the only step that touches your actual code   | `memex/`, `templates/`    |
+
+Routine edits invalidate only Stage C. Stage A/B layers stay cached.
+`pyproject.toml` changes are the rare event that costs a full rebuild, and
+that's correct — adding a dep DOES require re-resolving the venv.
+
+BuildKit cache mounts (`--mount=type=cache,target=/root/.cache/pip`) also
+preserve pip's download cache across builds, so even when Stage A *does*
+rebuild it skips the slow downloads.
+
 ---
 
 ## 2. Configure
