@@ -332,7 +332,7 @@ memex restore ARCHIVE [--target DIR]
 memex serve [--host H] [--port P] [--reload] [--workers N] [-R ROOT]
 ```
 
-Boots a uvicorn-backed FastAPI server. Defaults: `127.0.0.1:8000`, single worker. See [api.md](api.md) for the endpoint surface and [docker.md](docker.md) for production deployment.
+Boots a uvicorn-backed FastAPI server. Defaults: `127.0.0.1:7963`, single worker. See [api.md](api.md) for the endpoint surface and [docker.md](docker.md) for production deployment.
 
 `--reload` is for development only; pin `--workers 1` with it.
 
@@ -346,12 +346,12 @@ Server selection (precedence: CLI flag > env var > default):
 
 | Knob          | Flag          | Env var            | Default                  |
 |---------------|---------------|--------------------|--------------------------|
-| Base URL      | `--url`, `-u` | `MEMEX_API_URL`    | `http://127.0.0.1:8000`  |
+| Base URL      | `--url`, `-u` | `MEMEX_API_URL`    | `http://127.0.0.1:7963`  |
 | Bearer token  | `--token`     | `MEMEX_API_TOKEN`  | _(empty = no auth)_      |
 
 `--url` / `--token` are accepted at the `memex client` group level and apply
 to every subcommand invoked after them, e.g.
-`memex client --url http://host:8000 --token abc doc search "x"`.
+`memex client --url http://host:7963 --token abc doc search "x"`.
 
 ```
 memex client [--url URL] [--token T]

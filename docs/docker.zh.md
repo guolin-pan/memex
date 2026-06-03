@@ -7,7 +7,7 @@
 ```
 +-------------------+         +-------------------------------------------+
 |  调用方 (LLM、     |  HTTP   |  memex 容器                                |
-|  Cursor agent、   | ------> |  uvicorn :8000                            |
+|  Cursor agent、   | ------> |  uvicorn :7963                            |
 |  CI 机器人、curl)  |         |                                           |
 +-------------------+         |  /opt/memex/models/   <-- 镜像构建时烤进   |
                               |     chroma/onnx_models/...                |
@@ -68,11 +68,11 @@ BuildKit cache mount 还把 pip 的 `~/.cache/pip` 和 apt 的 `/var/cache/apt` 
 
 ```bash
 docker compose up -d
-curl -fsS http://localhost:8000/healthz       # 存活探针
-open http://localhost:8000/docs               # OpenAPI / Swagger UI
+curl -fsS http://localhost:7963/healthz       # 存活探针
+open http://localhost:7963/docs               # OpenAPI / Swagger UI
 ```
 
-默认对外端口 `8000`，改 `.env` 里的 `MEMEX_PORT`：
+默认对外端口 `7963`，改 `.env` 里的 `MEMEX_PORT`：
 
 ```bash
 MEMEX_PORT=18000 docker compose up -d
@@ -185,7 +185,7 @@ docker compose down -v && rm -rf ./data
 pipx install <memex-repo-路径>            # 或在 repo 里 `pip install -e .`
 
 # 指向部署
-export MEMEX_API_URL=http://<host>:8000
+export MEMEX_API_URL=http://<host>:7963
 export MEMEX_API_TOKEN=...                # 如果设了的话
 
 # 验证

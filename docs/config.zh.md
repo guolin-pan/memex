@@ -176,7 +176,7 @@ memex 自身只读这几个；其他（如 `OPENAI_API_KEY` 给 OpenAI SDK、`HF
 +----------------------+------------------+-----------------------------------------+
 | MEMEX_ROOT           | CLI + server     | 覆盖 <root> 路径；等价于 CLI -R 参数。  |
 | MEMEX_API_URL        | memex client     | 要访问的远端 API。                       |
-|                      |                  | 默认: http://127.0.0.1:8000             |
+|                      |                  | 默认: http://127.0.0.1:7963             |
 | MEMEX_API_TOKEN      | memex serve +    | server 端设了之后，除 /healthz 外所有   |
 |                      | memex client     | 端点都要求 Authorization: Bearer <tok>。|
 |                      |                  | client 端设了会自动带上。                |

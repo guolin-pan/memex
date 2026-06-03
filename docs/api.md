@@ -5,7 +5,7 @@
 ## Boot
 
 ```bash
-memex serve --host 0.0.0.0 --port 8000
+memex serve --host 0.0.0.0 --port 7963
 ```
 
 OpenAPI / Swagger UI is at `/docs`; the raw schema is at `/openapi.json`.
@@ -24,7 +24,7 @@ When set, **every endpoint except `/healthz` requires** `Authorization: Bearer <
 
 ```
 +--------------------+        HTTP/1.1         +---------------------------+
-|  caller            | ------- request ------> |  uvicorn :8000            |
+|  caller            | ------- request ------> |  uvicorn :7963            |
 |  (memex client,    |                         |  FastAPI app              |
 |   curl, httpx,     | <----- response ------- |  built by build_app(root) |
 |   any HTTP client) |                         +-------------+-------------+
@@ -87,10 +87,10 @@ A single `Wiki` and a single `MemStore` are built lazily and shared by every req
 ### Healthz + banner
 
 ```bash
-curl -fsS http://localhost:8000/healthz
+curl -fsS http://localhost:7963/healthz
 # -> {"ok":true}
 
-curl -fsS http://localhost:8000/
+curl -fsS http://localhost:7963/
 # -> {"name":"memex","version":"0.1.0","root":"/data","docs":"/docs",
 #     "openapi":"/openapi.json","auth_required":true}
 ```
@@ -100,7 +100,7 @@ curl -fsS http://localhost:8000/
 ```bash
 TOKEN=...                       # from $MEMEX_API_TOKEN
 
-curl -fsS http://localhost:8000/status -H "Authorization: Bearer $TOKEN"
+curl -fsS http://localhost:7963/status -H "Authorization: Bearer $TOKEN"
 # -> { "root":"/data", "user_id":"alice",
 #      "docs_count": 23, "chunks_count": 142,
 #      "embedder": "chroma-default:all-MiniLM-L6-v2",
@@ -112,7 +112,7 @@ curl -fsS http://localhost:8000/status -H "Authorization: Bearer $TOKEN"
 ### Add a doc
 
 ```bash
-curl -fsS -X POST http://localhost:8000/doc/add \
+curl -fsS -X POST http://localhost:7963/doc/add \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -131,7 +131,7 @@ curl -fsS -X POST http://localhost:8000/doc/add \
 ### Search
 
 ```bash
-curl -fsS -G http://localhost:8000/doc/search \
+curl -fsS -G http://localhost:7963/doc/search \
   -H "Authorization: Bearer $TOKEN" \
   --data-urlencode 'q=postgres analytic memory' \
   --data-urlencode 'k=3' \
@@ -162,7 +162,7 @@ Response shape:
 ### Build a context block (what Cursor hooks call)
 
 ```bash
-curl -fsS -X POST http://localhost:8000/ctx \
+curl -fsS -X POST http://localhost:7963/ctx \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -183,7 +183,7 @@ curl -fsS -X POST http://localhost:8000/ctx \
 ### Add a memory (verbatim)
 
 ```bash
-curl -fsS -X POST http://localhost:8000/mem/add \
+curl -fsS -X POST http://localhost:7963/mem/add \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -198,7 +198,7 @@ To opt into mem0's LLM-driven fact extraction (split/merge/dedupe), add `"infer"
 ### Render the profile block
 
 ```bash
-curl -fsS http://localhost:8000/mem/profile -H "Authorization: Bearer $TOKEN"
+curl -fsS http://localhost:7963/mem/profile -H "Authorization: Bearer $TOKEN"
 # -> { "block": "## About the user\n\n- (profile) ...\n- (pref) ...\n",
 #      "count": 7 }
 ```
@@ -206,7 +206,7 @@ curl -fsS http://localhost:8000/mem/profile -H "Authorization: Bearer $TOKEN"
 ### Reindex (admin)
 
 ```bash
-curl -fsS -X POST 'http://localhost:8000/doc/reindex?all=true' -H "Authorization: Bearer $TOKEN"
+curl -fsS -X POST 'http://localhost:7963/doc/reindex?all=true' -H "Authorization: Bearer $TOKEN"
 # -> { "added": [...], "updated": [...], "skipped": [...], "deleted": [] }
 ```
 

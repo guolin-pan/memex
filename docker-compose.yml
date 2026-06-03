@@ -3,7 +3,7 @@
 # Quick start:
 #   1) cp .env.example .env       # set MEMEX_API_TOKEN, OPENAI_API_KEY (if used), etc.
 #   2) docker compose up -d
-#   3) curl http://localhost:8000/healthz
+#   3) curl http://localhost:7963/healthz
 #
 # memex.yaml lifecycle:
 #   - On first start, the container's entrypoint drops a default
@@ -28,7 +28,7 @@ services:
     container_name: memex
     restart: unless-stopped
     ports:
-      - "${MEMEX_PORT:-8000}:8000"
+      - "${MEMEX_PORT:-7963}:7963"
     environment:
       # API root inside the container — must match the mounted volume target.
       MEMEX_ROOT: /data
@@ -57,7 +57,7 @@ services:
       # Optional: mount your local memex.yaml without touching the rest.
       # - ./data/memex.yaml:/data/memex.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:7963/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

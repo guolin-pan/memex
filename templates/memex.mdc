@@ -17,7 +17,7 @@ with `memex cursor install-*`:
 `install-hooks`, and `install-agents`. Disable with `--no-install-client`.)
 
 Server selection (precedence: CLI flag > env > default):
-- `--url URL` / `-u URL`  or  env `MEMEX_API_URL`  (default `http://127.0.0.1:8000`)
+- `--url URL` / `-u URL`  or  env `MEMEX_API_URL`  (default `http://127.0.0.1:7963`)
 - `--token TOKEN`         or  env `MEMEX_API_TOKEN`  (required when the server sets it)
 
 Two backends, addressed through the same script:

@@ -18,7 +18,7 @@ All commands invoke a stdlib-only Python script that lives next to this file:
 ~/.cursor/agents/memex-client.py
 ```
 
-The script reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and
+The script reads `MEMEX_API_URL` (default `http://127.0.0.1:7963`) and
 `MEMEX_API_TOKEN` from the environment, or accepts `--url` / `--token` flags.
 The user is expected to have these set (or to have left auth off for
 localhost). You do not need to repeat `--url` / `--token` per command unless

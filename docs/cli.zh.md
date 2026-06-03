@@ -332,7 +332,7 @@ memex restore ARCHIVE [--target DIR]
 memex serve [--host H] [--port P] [--reload] [--workers N] [-R ROOT]
 ```
 
-启 uvicorn + FastAPI 服务。默认 `127.0.0.1:8000`，单 worker。端点表见 [api.zh.md](api.zh.md)，生产部署见 [docker.zh.md](docker.zh.md)。
+启 uvicorn + FastAPI 服务。默认 `127.0.0.1:7963`，单 worker。端点表见 [api.zh.md](api.zh.md)，生产部署见 [docker.zh.md](docker.zh.md)。
 
 `--reload` 仅开发用；配它时 `--workers` 必须是 1。
 
@@ -346,10 +346,10 @@ memex serve [--host H] [--port P] [--reload] [--workers N] [-R ROOT]
 
 | 项 | 标志 | 环境变量 | 默认 |
 |---|---|---|---|
-| 服务地址 | `--url`、`-u` | `MEMEX_API_URL` | `http://127.0.0.1:8000` |
+| 服务地址 | `--url`、`-u` | `MEMEX_API_URL` | `http://127.0.0.1:7963` |
 | Bearer 令牌 | `--token` | `MEMEX_API_TOKEN` | _（空 = 不带鉴权头）_ |
 
-`--url` / `--token` 在 `memex client` 这一层接收，对后续每个子命令都生效，比如 `memex client --url http://host:8000 --token abc doc search "x"`。
+`--url` / `--token` 在 `memex client` 这一层接收，对后续每个子命令都生效，比如 `memex client --url http://host:7963 --token abc doc search "x"`。
 
 ```
 memex client [--url URL] [--token T]

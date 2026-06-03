@@ -8,7 +8,7 @@ talk to it via the **HTTP API** (and the `memex client` subcommand).
 ```
 ┌────────────────────┐    HTTP (FastAPI)    ┌──────────────────────────────────┐
 │  LLM / Cursor      │ ───────────────────▶ │  memex container                  │
-│  (memex client …)  │                      │  uvicorn :8000                    │
+│  (memex client …)  │                      │  uvicorn :7963                    │
 └────────────────────┘                      │                                   │
                                             │  /opt/memex/models/  ◀── baked    │
                                             │  ├── chroma/onnx_models/          │
@@ -42,9 +42,9 @@ docker compose build                    # ~5-10 min on first build (downloads mo
 docker compose up -d
 
 # Sanity checks
-curl -fsS http://localhost:8000/healthz
-curl -fsS http://localhost:8000/        # service banner
-open    http://localhost:8000/docs       # OpenAPI UI (Swagger)
+curl -fsS http://localhost:7963/healthz
+curl -fsS http://localhost:7963/        # service banner
+open    http://localhost:7963/docs       # OpenAPI UI (Swagger)
 ```
 
 ### Automated build + E2E test
@@ -166,7 +166,7 @@ MEMEX_API_TOKEN=$(openssl rand -hex 32)
 docker compose up -d --force-recreate
 
 curl -fsS -H "Authorization: Bearer $MEMEX_API_TOKEN" \
-     http://localhost:8000/status
+     http://localhost:7963/status
 ```
 
 `/healthz` stays open so the container's HEALTHCHECK still works.
@@ -183,7 +183,7 @@ curl -fsS -H "Authorization: Bearer $MEMEX_API_TOKEN" \
 
 ```bash
 # .env
-MEMEX_PORT=18000          # publishes container :8000 → host :18000
+MEMEX_PORT=18000          # publishes container :7963 → host :18000
 ```
 
 ---
@@ -218,7 +218,7 @@ Install `memex` on the agent's machine and point it at the container:
 
 ```bash
 pipx install memex                           # or: pip install -e <path>
-export MEMEX_API_URL=http://localhost:8000   # the running container
+export MEMEX_API_URL=http://localhost:7963   # the running container
 export MEMEX_API_TOKEN=...                   # only if you set one
 
 memex client status
@@ -234,12 +234,12 @@ operations safe to expose over HTTP (no `init`, no `watch`, no `cursor *`).
 ### Option B — Raw HTTP (any language)
 
 ```bash
-curl -fsS -X POST http://localhost:8000/doc/add \
+curl -fsS -X POST http://localhost:7963/doc/add \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer $MEMEX_API_TOKEN" \
      -d '{"body":"# Hello\n\nFirst note.\n","title":"Hello","tags":["intro"]}'
 
-curl -fsS "http://localhost:8000/doc/search?q=hello&k=3" \
+curl -fsS "http://localhost:7963/doc/search?q=hello&k=3" \
      -H "Authorization: Bearer $MEMEX_API_TOKEN"
 ```
 
@@ -253,7 +253,7 @@ the `memex` CLI directly. To point them at a remote container instead:
 1. Install `memex` on the dev machine (same as Option A above).
 2. Add the env vars to your shell rc (or a project `.envrc`):
    ```bash
-   export MEMEX_API_URL=http://localhost:8000
+   export MEMEX_API_URL=http://localhost:7963
    export MEMEX_API_TOKEN=...
    ```
 3. Edit `~/.cursor/agents/memex-*.md` (the file installed by

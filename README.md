@@ -233,10 +233,10 @@ Docker deployment + LLM/agent shell-tool calls possible.
 ### Start the server (local)
 
 ```bash
-memex serve --host 127.0.0.1 --port 8000
-# OpenAPI UI:    http://127.0.0.1:8000/docs
-# Liveness:      http://127.0.0.1:8000/healthz
-# Banner:        http://127.0.0.1:8000/
+memex serve --host 127.0.0.1 --port 7963
+# OpenAPI UI:    http://127.0.0.1:7963/docs
+# Liveness:      http://127.0.0.1:7963/healthz
+# Banner:        http://127.0.0.1:7963/
 ```
 
 ### Use it from anywhere with the client
@@ -245,11 +245,11 @@ The `memex client` subcommand is a thin httpx wrapper. LLMs / Cursor subagents
 shell out to it; nothing local-only required.
 
 ```bash
-# Pick a server (precedence: --url > $MEMEX_API_URL > http://127.0.0.1:8000):
-memex client --url http://memex.lan:8000 --token <token> status
+# Pick a server (precedence: --url > $MEMEX_API_URL > http://127.0.0.1:7963):
+memex client --url http://memex.lan:7963 --token <token> status
 
 # Or via env, useful for shells / agents that set it once:
-export MEMEX_API_URL=http://127.0.0.1:8000      # which server to talk to
+export MEMEX_API_URL=http://127.0.0.1:7963      # which server to talk to
 export MEMEX_API_TOKEN=<token>                  # only if the server set MEMEX_API_TOKEN
 
 memex client status
@@ -274,8 +274,8 @@ persistent, networked deployment.
 cp .env.example .env             # set MEMEX_API_TOKEN, OPENAI_API_KEY, …
 docker compose up -d --build
 
-curl http://localhost:8000/healthz
-open http://localhost:8000/docs   # OpenAPI / Swagger UI
+curl http://localhost:7963/healthz
+open http://localhost:7963/docs   # OpenAPI / Swagger UI
 
 # Or run the full automated build + E2E test in one shot:
 bash scripts/docker-build-test.sh
@@ -433,7 +433,7 @@ memex client raw METHOD PATH [--body JSON]                  # debugging escape h
 
 All commands accept the global `-R/--root` (or `$MEMEX_ROOT`) for the data directory.
 All `memex client …` commands accept `--url/-u` (or `$MEMEX_API_URL`, default
-`http://127.0.0.1:8000`) and `--token` (or `$MEMEX_API_TOKEN`). CLI flag wins
+`http://127.0.0.1:7963`) and `--token` (or `$MEMEX_API_TOKEN`). CLI flag wins
 over env var.
 
 ---

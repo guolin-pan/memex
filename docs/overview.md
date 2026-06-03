@@ -35,7 +35,7 @@ Each layer is good at exactly what the other is bad at:
                   |                       v                        |
                   |             +-------------------+              |
                   |             |  memex serve      |              |
-                  |             |  FastAPI :8000    | <------------+
+                  |             |  FastAPI :7963    | <------------+
                   |             +---------+---------+
                   |                       |
                   +-----------+-----------+

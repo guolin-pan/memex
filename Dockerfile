@@ -27,7 +27,7 @@
 # Runtime contract:
 #   - Data lives in /data (mount a host volume here for persistence).
 #   - Config lives in /data/memex.yaml.
-#   - Server listens on 0.0.0.0:8000.
+#   - Server listens on 0.0.0.0:7963.
 #   - Set MEMEX_API_TOKEN to require Authorization: Bearer <token>.
 # -----------------------------------------------------------------------------
 
@@ -243,12 +243,12 @@ RUN mkdir -p /home/memex/.cache /data \
 USER memex
 WORKDIR /data
 
-EXPOSE 8000
+EXPOSE 7963
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/healthz || exit 1
+    CMD curl -fsS http://localhost:7963/healthz || exit 1
 
 # tini is PID 1; memex-entrypoint drops a default memex.yaml if absent and
 # then exec's CMD.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/memex-entrypoint"]
-CMD ["memex", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["memex", "serve", "--host", "0.0.0.0", "--port", "7963"]

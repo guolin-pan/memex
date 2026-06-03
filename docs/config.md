@@ -179,7 +179,7 @@ These are the only env vars memex itself reads. Everything else (e.g. `OPENAI_AP
 | MEMEX_ROOT           | CLI + server     | Override <root> path. Equivalent to     |
 |                      |                  | -R flag on the CLI.                     |
 | MEMEX_API_URL        | memex client     | The remote API to talk to.              |
-|                      |                  | Default: http://127.0.0.1:8000          |
+|                      |                  | Default: http://127.0.0.1:7963          |
 | MEMEX_API_TOKEN      | memex serve +    | If set on the server, every endpoint    |
 |                      | memex client     | except /healthz needs Authorization:    |
 |                      |                  | Bearer <token>. The client sends it     |

@@ -9,8 +9,8 @@ Mirrors the local CLI surface for the operations agents actually need:
 
 Pointing the client at a server (precedence: CLI flag > env > default):
 
-  memex client --url http://host:8000 --token abc123 status
-  MEMEX_API_URL=http://host:8000 MEMEX_API_TOKEN=abc123 memex client status
+  memex client --url http://host:7963 --token abc123 status
+  MEMEX_API_URL=http://host:7963 MEMEX_API_TOKEN=abc123 memex client status
 
 Designed to be safe in subagent shell sandboxes — no local filesystem reads,
 no chroma/mem0 imports.
@@ -36,7 +36,7 @@ app.add_typer(mem_app, name="mem")
 console = Console()
 err_console = Console(stderr=True)
 
-DEFAULT_URL = "http://127.0.0.1:8000"
+DEFAULT_URL = "http://127.0.0.1:7963"
 DEFAULT_TIMEOUT = 60.0
 
 # Populated by the `memex client` Typer callback below. `--url` / `--token`

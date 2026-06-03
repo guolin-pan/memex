@@ -198,14 +198,14 @@ Hand the block to an LLM and you get an answer grounded in *your* notes and awar
 - Run it as a server (so other machines / containers / LLM tools can hit your memex over HTTP):
 
   ```bash
-  memex serve --port 8000
-  open http://localhost:8000/docs   # OpenAPI / Swagger UI
+  memex serve --port 7963
+  open http://localhost:7963/docs   # OpenAPI / Swagger UI
   ```
 
   Then from elsewhere:
 
   ```bash
-  export MEMEX_API_URL=http://<host>:8000
+  export MEMEX_API_URL=http://<host>:7963
   memex client status
   memex client doc search "postgres" -k 3
   ```

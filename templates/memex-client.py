@@ -19,7 +19,7 @@ Surface mirrors `memex client`:
   memex-client.py [--url URL] [--token TOKEN] <subcommand> ...
 
 Server selection (precedence: CLI flag > env var > default):
-  --url URL / -u URL  or  $MEMEX_API_URL    (default http://127.0.0.1:8000)
+  --url URL / -u URL  or  $MEMEX_API_URL    (default http://127.0.0.1:7963)
   --token TOKEN       or  $MEMEX_API_TOKEN
 """
 
@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-DEFAULT_URL = "http://127.0.0.1:8000"
+DEFAULT_URL = "http://127.0.0.1:7963"
 DEFAULT_TIMEOUT = 60.0
 
 
@@ -405,8 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
     Mirrors how `memex client` (Typer + Click) handles its callback options:
     they must appear *before* the subcommand:
 
-        memex-client.py --url http://host:8000 --token abc status   ✓
-        memex-client.py status --url http://host:8000 …             ✗
+        memex-client.py --url http://host:7963 --token abc status   ✓
+        memex-client.py status --url http://host:7963 …             ✗
 
     Why not duplicate them on every subparser?  argparse subparsers re-apply
     their own `default=None` to the merged namespace, which would silently

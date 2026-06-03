@@ -98,7 +98,7 @@ Hook 的输出（`/tmp/cursor-memex-ctx.md`）就是那个 `<!-- BEGIN memex-con
 
 `$HOME/.cursor/agents/memex-client.py` 由 `memex cursor install-hooks` / `install-rule` / `install-agents` 顺带落地（用 `--no-install-client` 关闭，或用 `memex cursor install-client` 单独刷新）。脚本只用 Python 标准库，跟磁盘上有没有 `memex` 包**完全没关系**——这一点很关键，因为 PyPI 上还有个同名的、无关的 `memex` 包会被 `uv tool install memex` 误装上。
 
-脚本读 `MEMEX_API_URL`（默认 `http://127.0.0.1:8000`）和 `MEMEX_API_TOKEN`，或接受 `--url` / `--token` 标志。把这两个环境变量设进 shell rc（或 `.envrc`）一次，每个 hook / subagent 都会继承。
+脚本读 `MEMEX_API_URL`（默认 `http://127.0.0.1:7963`）和 `MEMEX_API_TOKEN`，或接受 `--url` / `--token` 标志。把这两个环境变量设进 shell rc（或 `.envrc`）一次，每个 hook / subagent 都会继承。
 
 > **注意**：旧模板还有一条 `sessionEnd` 跑 `memex mem learn --from-cursor-transcript`。这个命令读本地 transcript 文件，**没有 HTTP 对应实现**，所以默认模板里已经移除——保留它会让 Docker 部署直接报错。如果你跑的是本地 memex 想要这条 hook 回来，自己在 `~/.cursor/hooks.json` 里加上即可。
 
@@ -187,11 +187,11 @@ Cursor 文档（截至本文）只支持这五个字段——没有 per-subagent
 
 1. `--url URL` / `-u URL` 和 `--token TOKEN`（CLI 标志）—— 适合一次性。
 2. `MEMEX_API_URL` 和 `MEMEX_API_TOKEN`（环境变量）—— 推荐给 hooks/subagents 用，在 shell rc 里设一次。
-3. 默认：`http://127.0.0.1:8000`，无 token。
+3. 默认：`http://127.0.0.1:7963`，无 token。
 
 ```bash
 # 在 ~/.bashrc / ~/.zshrc 里，或 direnv 用户的 .envrc 里：
-export MEMEX_API_URL=http://memex.local:8000
+export MEMEX_API_URL=http://memex.local:7963
 export MEMEX_API_TOKEN=$(pass show memex/api-token)
 ```
 

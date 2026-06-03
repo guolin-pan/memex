@@ -103,7 +103,7 @@ The hook output (`/tmp/cursor-memex-ctx.md`) is the `<!-- BEGIN memex-context --
 
 `$HOME/.cursor/agents/memex-client.py` is dropped automatically by `memex cursor install-hooks` / `install-rule` / `install-agents` (disable with `--no-install-client`, or refresh it explicitly with `memex cursor install-client`). The script depends only on the Python standard library, so it has no version coupling with the `memex` package on disk — a key property because PyPI hosts an unrelated package also called `memex` that `uv tool install memex` happily pulls in.
 
-The script reads `MEMEX_API_URL` (default `http://127.0.0.1:8000`) and `MEMEX_API_TOKEN` from the environment, or accepts `--url` / `--token` flags. Set those env vars in your shell rc (or `.envrc`) once and every hook / subagent inherits them.
+The script reads `MEMEX_API_URL` (default `http://127.0.0.1:7963`) and `MEMEX_API_TOKEN` from the environment, or accepts `--url` / `--token` flags. Set those env vars in your shell rc (or `.envrc`) once and every hook / subagent inherits them.
 
 > **Note:** the previous template also ran `memex mem learn --from-cursor-transcript` on `sessionEnd`. That command reads the transcript file on the local disk and has **no HTTP equivalent**, so it is no longer in the default template — it would break against a Docker-deployed memex. If you run memex locally and want it back, add the entry manually to `~/.cursor/hooks.json`.
 
@@ -194,11 +194,11 @@ Cursor docs (as of writing) cover these five fields only — there's no per-suba
 
 1. `--url URL` / `-u URL` and `--token TOKEN` (CLI flags) — useful for one-offs.
 2. `MEMEX_API_URL` and `MEMEX_API_TOKEN` (env vars) — recommended for hooks/subagents, set once in your shell rc.
-3. Defaults: `http://127.0.0.1:8000` and no token.
+3. Defaults: `http://127.0.0.1:7963` and no token.
 
 ```bash
 # in ~/.bashrc / ~/.zshrc, or a project .envrc for direnv users:
-export MEMEX_API_URL=http://memex.local:8000
+export MEMEX_API_URL=http://memex.local:7963
 export MEMEX_API_TOKEN=$(pass show memex/api-token)
 ```
 

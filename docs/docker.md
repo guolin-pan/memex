@@ -7,7 +7,7 @@ This page is the short, opinionated version. For the full operations runbook (mu
 ```
 +-------------------+         +-------------------------------------------+
 |  caller (LLM,     |  HTTP   |  memex container                          |
-|  Cursor agent,    | ------> |  uvicorn :8000                            |
+|  Cursor agent,    | ------> |  uvicorn :7963                            |
 |  CI bot, curl)    |         |                                           |
 +-------------------+         |  /opt/memex/models/   <-- BAKED at build  |
                               |     chroma/onnx_models/...                |
@@ -71,11 +71,11 @@ skips the slow downloads.
 
 ```bash
 docker compose up -d
-curl -fsS http://localhost:8000/healthz       # liveness
-open http://localhost:8000/docs               # OpenAPI / Swagger UI
+curl -fsS http://localhost:7963/healthz       # liveness
+open http://localhost:7963/docs               # OpenAPI / Swagger UI
 ```
 
-Default exposed port is `8000`. Change with `MEMEX_PORT` in `.env`:
+Default exposed port is `7963`. Change with `MEMEX_PORT` in `.env`:
 
 ```bash
 MEMEX_PORT=18000 docker compose up -d
@@ -187,7 +187,7 @@ If you keep your KB in Docker (shared between dev box and laptop, or behind a to
 pipx install <path-to-memex-repo>          # or `pip install -e .` from the repo
 
 # point at the deployment
-export MEMEX_API_URL=http://<host>:8000
+export MEMEX_API_URL=http://<host>:7963
 export MEMEX_API_TOKEN=...                 # if you set one
 
 # verify

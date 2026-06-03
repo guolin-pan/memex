@@ -228,7 +228,7 @@ note "running container as uid:gid = ${HOST_UID}:${HOST_GID}"
 CID=$(docker run -d \
   --name "$CONTAINER" \
   --user "${HOST_UID}:${HOST_GID}" \
-  -p "${HOST_PORT}:8000" \
+  -p "${HOST_PORT}:7963" \
   -v "${DATA_DIR}:/data" \
   -e "MEMEX_API_TOKEN=$TOKEN" \
   -e "OPENAI_API_KEY=no-key" \
@@ -352,7 +352,7 @@ expect_contains "GET /mem/profile renders" "$MEM_PROFILE" "About the user"
 
 # --- 7. memex client (inside the container) ---------------------------------
 step "7. in-container memex client"
-INSIDE() { docker exec "$CONTAINER" env MEMEX_API_URL="http://127.0.0.1:8000" MEMEX_API_TOKEN="$TOKEN" "$@"; }
+INSIDE() { docker exec "$CONTAINER" env MEMEX_API_URL="http://127.0.0.1:7963" MEMEX_API_TOKEN="$TOKEN" "$@"; }
 expect_contains "memex client status" "$(INSIDE memex client status --json 2>&1)" '"docs_count"'
 expect_contains "memex client mem ls" "$(INSIDE memex client mem ls 2>&1)"  "TypeScript"
 
