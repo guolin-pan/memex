@@ -80,7 +80,14 @@ def test_kb_ask_is_readonly_others_are_not():
 # ---------------------------------------------------------------------------
 
 
-def test_install_agents_project_scope(tmp_path: Path):
+def _isolated_home(monkeypatch, tmp_path: Path) -> Path:
+    """Point HOME at tmp_path so the auto client-script install doesn't touch the real ~."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return tmp_path
+
+
+def test_install_agents_project_scope(tmp_path: Path, monkeypatch):
+    _isolated_home(monkeypatch, tmp_path / "home")
     res = runner.invoke(
         app,
         ["cursor", "install-agents", "--scope", "project", "--project-root", str(tmp_path)],
@@ -93,6 +100,8 @@ def test_install_agents_project_scope(tmp_path: Path):
         assert f.exists(), f"missing {f}"
         meta, _ = _split_frontmatter(f.read_text())
         assert meta["name"] == name
+    # The standalone client lands at user scope regardless of agent scope.
+    assert (tmp_path / "home" / ".cursor" / "agents" / "memex-client.py").exists()
 
 
 def test_install_agents_user_scope(tmp_path: Path, monkeypatch):
@@ -102,9 +111,12 @@ def test_install_agents_user_scope(tmp_path: Path, monkeypatch):
     for name in AGENT_NAMES:
         f = tmp_path / ".cursor" / "agents" / f"{name}.md"
         assert f.exists(), f"missing user-scope agent {f}"
+    # Client script installs into the same dir.
+    assert (tmp_path / ".cursor" / "agents" / "memex-client.py").exists()
 
 
-def test_install_agents_only_filter(tmp_path: Path):
+def test_install_agents_only_filter(tmp_path: Path, monkeypatch):
+    _isolated_home(monkeypatch, tmp_path / "home")
     res = runner.invoke(
         app,
         [
@@ -120,10 +132,33 @@ def test_install_agents_only_filter(tmp_path: Path):
     )
     assert res.exit_code == 0, res.output
     files = sorted(p.name for p in (tmp_path / ".cursor" / "agents").iterdir())
+    # The client script is installed in user-scope home, not in the project
+    # agents dir, so --only memex-ask still leaves the project dir clean.
     assert files == ["memex-ask.md"]
 
 
-def test_install_agents_skips_existing_without_force(tmp_path: Path):
+def test_install_agents_no_install_client(tmp_path: Path, monkeypatch):
+    home = tmp_path / "home"
+    _isolated_home(monkeypatch, home)
+    res = runner.invoke(
+        app,
+        [
+            "cursor",
+            "install-agents",
+            "--scope",
+            "project",
+            "--project-root",
+            str(tmp_path),
+            "--no-install-client",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert (tmp_path / ".cursor" / "agents" / "memex-ask.md").exists()
+    assert not (home / ".cursor" / "agents" / "memex-client.py").exists()
+
+
+def test_install_agents_skips_existing_without_force(tmp_path: Path, monkeypatch):
+    _isolated_home(monkeypatch, tmp_path / "home")
     agents_dir = tmp_path / ".cursor" / "agents"
     agents_dir.mkdir(parents=True)
     (agents_dir / "memex-ask.md").write_text("# custom user agent — do not touch\n")
@@ -140,7 +175,8 @@ def test_install_agents_skips_existing_without_force(tmp_path: Path):
     assert (agents_dir / "memex-curator.md").exists()
 
 
-def test_install_agents_force_overwrites(tmp_path: Path):
+def test_install_agents_force_overwrites(tmp_path: Path, monkeypatch):
+    _isolated_home(monkeypatch, tmp_path / "home")
     agents_dir = tmp_path / ".cursor" / "agents"
     agents_dir.mkdir(parents=True)
     (agents_dir / "memex-ask.md").write_text("stale\n")
@@ -163,7 +199,8 @@ def test_install_agents_force_overwrites(tmp_path: Path):
     assert "name: memex-ask" in content
 
 
-def test_install_agents_rejects_unknown_name(tmp_path: Path):
+def test_install_agents_rejects_unknown_name(tmp_path: Path, monkeypatch):
+    _isolated_home(monkeypatch, tmp_path / "home")
     res = runner.invoke(
         app,
         [
@@ -213,12 +250,23 @@ def test_kb_mdc_rule_delegates_writes_to_subagents():
     assert "/memex-archive" in rule
     assert "/memex-curator" in rule
     assert "memex-context" in rule  # uses pre-injected ctx
-    assert "memex doc search" in rule
-    assert "memex mem search" in rule
+    # All KB access goes through the standalone HTTP client script (so the
+    # rule works against a Docker-deployed memex without needing the `memex`
+    # package on PATH).
+    assert "memex-client.py doc search" in rule
+    assert "memex-client.py mem search" in rule
+    assert "MEMEX_API_URL" in rule
 
-    # Must NOT prescribe writes from the main thread anymore (those moved to
-    # the memex-archive / memex-curator agents).
-    forbidden = ["memex doc add", "memex mem add", "memex doc rm", "memex mem rm", "memex mem update"]
+    # Must NOT prescribe writes from the main thread (those moved to the
+    # memex-archive / memex-curator agents). Names are checked in the script
+    # form, which is what the rule advertises now.
+    forbidden = [
+        "memex-client.py doc add",
+        "memex-client.py mem add",
+        "memex-client.py doc rm",
+        "memex-client.py mem rm",
+        "memex-client.py doc reindex",
+    ]
     for token in forbidden:
         # Allowed only inside an explicit "don't" / negative context.
         # Cheap heuristic: count occurrences and require they all sit after a

@@ -197,14 +197,14 @@ memex ctx "What's our postgres tuning policy?"
 - 当 server 跑（让别的机器 / 容器 / LLM 工具通过 HTTP 访问同一份 memex）：
 
   ```bash
-  memex serve --port 8000
-  open http://localhost:8000/docs   # OpenAPI / Swagger UI
+  memex serve --port 7963
+  open http://localhost:7963/docs   # OpenAPI / Swagger UI
   ```
 
   然后在别处：
 
   ```bash
-  export MEMEX_API_URL=http://<host>:8000
+  export MEMEX_API_URL=http://<host>:7963
   memex client status
   memex client doc search "postgres" -k 3
   ```

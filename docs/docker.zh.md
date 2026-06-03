@@ -7,7 +7,7 @@
 ```
 +-------------------+         +-------------------------------------------+
 |  调用方 (LLM、     |  HTTP   |  memex 容器                                |
-|  Cursor agent、   | ------> |  uvicorn :8000                            |
+|  Cursor agent、   | ------> |  uvicorn :7963                            |
 |  CI 机器人、curl)  |         |                                           |
 +-------------------+         |  /opt/memex/models/   <-- 镜像构建时烤进   |
                               |     chroma/onnx_models/...                |
@@ -37,46 +37,42 @@ cp .env.example .env                          # 设 MEMEX_API_TOKEN、OPENAI_API
 docker compose build                          # 首次 ~5-10 分钟
 ```
 
-### 两个变体
+### 镜像里都烤进了什么
 
-```
-+----------------------------+----------+----------------------+-------------------------------+
-| variant                    | 大小      | 运行时网络?           | 何时用                         |
-+----------------------------+----------+----------------------+-------------------------------+
-| WITH_LOCAL_MODELS=1        | ~1.1 GB  | 无                    | 自托管、离线、私有 LLM、内网    |
-| (默认)                     |          |                      |                                |
-+----------------------------+----------+----------------------+-------------------------------+
-| WITH_LOCAL_MODELS=0        | ~500 MB  | 有 (首次会下载 ONNX +| 只用 openai 云 profile、       |
-|                            |          | HF 模型)              | 对镜像大小敏感                  |
-+----------------------------+----------+----------------------+-------------------------------+
-```
+设计上**只有一个变体**——运行时可能加载的所有模型都被打进镜像，容器启动后**永不联网**拉模型文件。镜像大小（~1.5-2 GB）是为此付出的、明确接受的代价。
 
-`WITH_LOCAL_MODELS=1` 时被烤进镜像的东西：
+| Bundle | 用途 |
+|---|---|
+| CPU-only PyTorch（来自 PyTorch CPU wheel index）                                              | sentence-transformers、mem0 HF embedder |
+| sentence-transformers 包                                                                       | mem0 的 HuggingFace embedder |
+| ChromaDB ONNX `all-MiniLM-L6-v2`，位于 `/opt/memex/models/chroma/onnx_models/`                 | wiki 向量层（`embedder.provider: chroma-default` 时） |
+| HF `sentence-transformers/all-MiniLM-L6-v2`（完整 snapshot），位于 `/opt/memex/models/hf/`     | mem0 的 HuggingFace embedder |
+| fastembed `Qdrant/bm25`，位于 `/opt/memex/models/fastembed/`                                    | mem0 / qdrant 的 BM25 关键词检索 |
+| spaCy `en_core_web_sm`（`python -m spacy download` 安装到 `/opt/venv`）                         | mem0 词形还原 / 实体抽取（`mem0ai[nlp]`） |
+| tiktoken `cl100k_base` BPE 文件，位于 `/opt/memex/models/tiktoken/`                              | memex 分块 / token 计数 |
 
-| Bundle | 大小 | 用途 |
-|---|---|---|
-| CPU-only PyTorch（PyTorch 的 CPU wheel index） | ~180 MB | sentence-transformers |
-| sentence-transformers 包 | ~10 MB | mem0 的 HuggingFace embedder |
-| ChromaDB ONNX `all-MiniLM-L6-v2` | ~165 MB | wiki 向量层（`embedder.provider: chroma-default` 时） |
-| HF `sentence-transformers/all-MiniLM-L6-v2`（只拉 safetensors，跳过冗余的 PyTorch/TF/Rust/ONNX/OpenVINO 格式） | ~90 MB | mem0 的 HF embedder |
+### 增量构建
 
-要构建瘦身版：
+Dockerfile 故意拆成三段，**一次普通的源码改动重建只要 ~40 秒，而不是 25 分钟**：
 
-```bash
-WITH_LOCAL_MODELS=0 docker compose build
-# 或裸 docker：
-docker build --build-arg WITH_LOCAL_MODELS=0 -t memex:slim .
-```
+| 阶段 | 做什么                                          | 缓存命中键                | 何时失效            |
+|------|------------------------------------------------|---------------------------|---------------------|
+| A    | 用 stub 版 `memex/__init__.py` 让 pip 装齐所有依赖（不碰真源码）| `pyproject.toml`、`README.md` | 改依赖时           |
+| B    | 预热所有模型（HF MiniLM、spaCy、ChromaDB ONNX、fastembed、tiktoken）| 同 A                     | 改依赖时           |
+| C    | `COPY memex/` + `templates/` + `pip install --no-deps .` | `memex/`、`templates/`    | 每次改源码（~5s）  |
+
+BuildKit cache mount 还把 pip 的 `~/.cache/pip` 和 apt 的 `/var/cache/apt` 在
+不同构建之间持久化，即便 `pyproject.toml` 改动触发全量重建，下载步骤也能复用缓存。
 
 ## 运行
 
 ```bash
 docker compose up -d
-curl -fsS http://localhost:8000/healthz       # 存活探针
-open http://localhost:8000/docs               # OpenAPI / Swagger UI
+curl -fsS http://localhost:7963/healthz       # 存活探针
+open http://localhost:7963/docs               # OpenAPI / Swagger UI
 ```
 
-默认对外端口 `8000`，改 `.env` 里的 `MEMEX_PORT`：
+默认对外端口 `7963`，改 `.env` 里的 `MEMEX_PORT`：
 
 ```bash
 MEMEX_PORT=18000 docker compose up -d
@@ -149,7 +145,7 @@ MEMEX_API_TOKEN=$(openssl rand -hex 32)
 ```bash
 bash scripts/docker-build-test.sh                       # 完整构建 + 测试
 FAST=1 bash scripts/docker-build-test.sh               # 镜像存在则跳过构建
-WITH_LOCAL_MODELS=0 bash scripts/docker-build-test.sh   # 构建瘦身版
+FAST=1 bash scripts/docker-build-test.sh                # 镜像存在时跳过 rebuild
 ```
 
 最后会打印 `PASS / FAIL` 计数。脚本本身就是完整 checklist。
@@ -189,7 +185,7 @@ docker compose down -v && rm -rf ./data
 pipx install <memex-repo-路径>            # 或在 repo 里 `pip install -e .`
 
 # 指向部署
-export MEMEX_API_URL=http://<host>:8000
+export MEMEX_API_URL=http://<host>:7963
 export MEMEX_API_TOKEN=...                # 如果设了的话
 
 # 验证
@@ -232,4 +228,4 @@ llm:
 完整表在 [`../DOCKER.md`](../DOCKER.md) 末尾。两个最常见的坑：
 
 - **`/data` permission denied** —— 容器里用户的 uid 是 1000。如果宿主机目录属主不是 1000，跑一次 `chown -R 1000:1000 ./data`，或在 build 时用 `--build-arg` 改 uid。
-- **某个 HF 模型报 `OSError: ... offline mode`** —— 你用 `WITH_LOCAL_MODELS=0` 构建的。要么重建为 `=1`，要么运行时加 `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0`（首次请求会从网络拉）。
+- **某个 HF 模型报 `OSError: ... offline mode`** —— 你请求的不是镜像里烤进去的那个 HF 模型。要么在 Dockerfile 的预热步骤里也 `snapshot_download` 这个 repo，要么运行时加 `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0` 并给容器网络（首次会从网络拉）。

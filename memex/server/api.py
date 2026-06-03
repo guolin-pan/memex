@@ -269,7 +269,14 @@ def build_app(root: str | None = None) -> FastAPI:
 
     @app.get("/mem/{mem_id}", response_model=MemOut, dependencies=[Depends(_require_token)])
     def mem_show(mem_id: str):
-        item = state.mem.get(mem_id)
+        # `state.mem.get(...)` returns None for unknown ids (mem0's contract)
+        # and propagates ValueError only when a short suffix matches multiple
+        # stored memories. KeyError is mapped to None inside `get()` so we
+        # don't need to catch it here.
+        try:
+            item = state.mem.get(mem_id)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
         if item is None:
             raise HTTPException(404, f"no memory {mem_id!r}")
         return _mem_to_out(item)
@@ -279,7 +286,12 @@ def build_app(root: str | None = None) -> FastAPI:
         if mem_id == "all":
             state.mem.delete_all()
             return {"deleted": "all"}
-        state.mem.delete(mem_id)
+        try:
+            state.mem.delete(mem_id)
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
         return {"deleted": mem_id}
 
     # -------------- ctx --------------

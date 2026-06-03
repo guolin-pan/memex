@@ -30,7 +30,14 @@ htmlcov/
 coverage.xml
 
 # --- IDE / editor / OS ---------------------------------------------------
-.vscode/
+# Keep a minimal committed VS Code / Cursor workspace so the interpreter and
+# integrated terminal default to ./.venv (editable memex from this repo).
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+# `memex cursor install-{rule,agents}` writes here when run with --scope project
+# (or `install-rule <this-repo>`). It's local-only operator config; don't commit.
+.cursor/
 .idea/
 *.swp
 *.swo

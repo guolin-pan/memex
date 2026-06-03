@@ -7,6 +7,9 @@ test module that's skipped when OPENAI_API_KEY is missing.
 from __future__ import annotations
 
 import os
+import socket
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -39,3 +42,53 @@ def memex_root(tmp_path: Path) -> Path:
 @pytest.fixture()
 def cfg(memex_root: Path) -> Config:
     return load_config(memex_root)
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture()
+def live_server(cfg: Config, monkeypatch):
+    """Boot uvicorn in a background thread, yield its base URL, shut it down.
+
+    Used by both `test_client_cmd.py` (the Typer client) and
+    `test_memex_client_script.py` (the standalone stdlib script) so the two
+    surfaces are exercised against the same FastAPI app on a real socket.
+    """
+    import httpx
+    import uvicorn
+
+    from memex.server.api import build_app
+
+    port = _free_port()
+    api = build_app(str(cfg.root))
+    config = uvicorn.Config(api, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            r = httpx.get(f"{base_url}/healthz", timeout=0.5)
+            if r.status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        server.should_exit = True
+        raise RuntimeError("uvicorn did not start in time")
+
+    monkeypatch.setenv("MEMEX_API_URL", base_url)
+    monkeypatch.delenv("MEMEX_API_TOKEN", raising=False)
+
+    try:
+        yield base_url
+    finally:
+        server.should_exit = True
+        t.join(timeout=5)

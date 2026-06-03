@@ -38,6 +38,12 @@ source .venv/bin/activate
 memex --version
 ```
 
+**Use this repo’s package, not a global `memex`.** If you ever ran `uv tool install memex` (or `pipx install memex`), your shell may pick `~/.local/bin/memex` first — that is a **separate** environment from `.venv/` and will not match this checkout. While working in the clone:
+
+- Prefer **`source .venv/bin/activate`** then `memex …`, or **`uv run memex …`** from the repo root (uses the project env / lockfile).
+- Cursor/VS Code: open the folder as a workspace; **`.vscode/settings.json`** pins the interpreter to `.venv/bin/python` and activates it in new integrated terminals.
+- To remove the shadowing tool: `uv tool uninstall memex` (optional).
+
 The installer is idempotent and safe to rerun. It picks `uv` when available
 (10-100x faster than pip) and falls back to `python3 -m venv + pip`. Flags:
 
@@ -53,6 +59,15 @@ The installer is idempotent and safe to rerun. It picks `uv` when available
 | `--quiet`             | print only PASS/FAIL |
 
 Run `bash scripts/install.sh --help` for the full reference.
+
+**`mem search` / mem0 import crashes** (`ModuleNotFoundError: PreTrainedModel` or `AttributeError: module 'sys' has no attribute 'get_int_max_str_digits'`): your `.venv` was likely created with a **pre-release CPython** (e.g. `3.11.0rc1`). PyTorch 2.12’s dynamo layer needs `sys.get_int_max_str_digits` (present only in **3.11.0 final+**). Fix: install a release interpreter and recreate the venv, for example:
+
+```bash
+uv python install 3.11
+rm -rf .venv
+bash scripts/install.sh --uv --python 3.11
+# or: UV_PYTHON=3.11 uv sync && uv run memex mem search test
+```
 
 ### From source — manual
 
@@ -218,10 +233,10 @@ Docker deployment + LLM/agent shell-tool calls possible.
 ### Start the server (local)
 
 ```bash
-memex serve --host 127.0.0.1 --port 8000
-# OpenAPI UI:    http://127.0.0.1:8000/docs
-# Liveness:      http://127.0.0.1:8000/healthz
-# Banner:        http://127.0.0.1:8000/
+memex serve --host 127.0.0.1 --port 7963
+# OpenAPI UI:    http://127.0.0.1:7963/docs
+# Liveness:      http://127.0.0.1:7963/healthz
+# Banner:        http://127.0.0.1:7963/
 ```
 
 ### Use it from anywhere with the client
@@ -230,7 +245,11 @@ The `memex client` subcommand is a thin httpx wrapper. LLMs / Cursor subagents
 shell out to it; nothing local-only required.
 
 ```bash
-export MEMEX_API_URL=http://127.0.0.1:8000      # which server to talk to
+# Pick a server (precedence: --url > $MEMEX_API_URL > http://127.0.0.1:7963):
+memex client --url http://memex.lan:7963 --token <token> status
+
+# Or via env, useful for shells / agents that set it once:
+export MEMEX_API_URL=http://127.0.0.1:7963      # which server to talk to
 export MEMEX_API_TOKEN=<token>                  # only if the server set MEMEX_API_TOKEN
 
 memex client status
@@ -255,8 +274,8 @@ persistent, networked deployment.
 cp .env.example .env             # set MEMEX_API_TOKEN, OPENAI_API_KEY, …
 docker compose up -d --build
 
-curl http://localhost:8000/healthz
-open http://localhost:8000/docs   # OpenAPI / Swagger UI
+curl http://localhost:7963/healthz
+open http://localhost:7963/docs   # OpenAPI / Swagger UI
 
 # Or run the full automated build + E2E test in one shot:
 bash scripts/docker-build-test.sh
@@ -413,8 +432,9 @@ memex client raw METHOD PATH [--body JSON]                  # debugging escape h
 ```
 
 All commands accept the global `-R/--root` (or `$MEMEX_ROOT`) for the data directory.
-All `memex client …` commands read `MEMEX_API_URL` (default `http://127.0.0.1:8000`)
-and `MEMEX_API_TOKEN` from the environment.
+All `memex client …` commands accept `--url/-u` (or `$MEMEX_API_URL`, default
+`http://127.0.0.1:7963`) and `--token` (or `$MEMEX_API_TOKEN`). CLI flag wins
+over env var.
 
 ---
 

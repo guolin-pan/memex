@@ -3,28 +3,32 @@
 # Quick start:
 #   1) cp .env.example .env       # set MEMEX_API_TOKEN, OPENAI_API_KEY (if used), etc.
 #   2) docker compose up -d
-#   3) curl http://localhost:8000/healthz
+#   3) curl http://localhost:7963/healthz
 #
-# Bring your own memex.yaml:
-#   - The first start populates ./data/memex.yaml from the OpenAI default profile.
-#   - To use the offline + Ollama profile, drop your own ./data/memex.yaml in
-#     before bringing the service up (or shell into the container and run
-#     `memex init --profile local --force`).
+# memex.yaml lifecycle:
+#   - On first start, the container's entrypoint drops a default
+#     ./data/memex.yaml that uses the baked offline embedder (chroma-default
+#     all-MiniLM-L6-v2) and an OpenAI-compatible LLM endpoint. Defaults match
+#     the project's reference local setup (Ollama at 10.242.29.48:11434, model
+#     qwen3:4b, user_id guolin). Every value is overridable via the
+#     MEMEX_DEFAULT_* env vars below — see docker/entrypoint.sh.
+#   - On subsequent starts the existing ./data/memex.yaml is left alone, so
+#     edits you make on the host stick. Delete the file if you want the
+#     defaults regenerated.
+#   - If you'd rather not auto-generate at all, drop your own
+#     ./data/memex.yaml in place before `docker compose up` and the entrypoint
+#     will leave it alone.
 
 services:
   memex:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Bake offline models into the image (~1.4 GB total). Set to 0 for a
-        # slim image (~500 MB) when you'll only use the openai cloud profile.
-        WITH_LOCAL_MODELS: "${WITH_LOCAL_MODELS:-1}"
     image: memex:latest
     container_name: memex
     restart: unless-stopped
     ports:
-      - "${MEMEX_PORT:-8000}:8000"
+      - "${MEMEX_PORT:-7963}:7963"
     environment:
       # API root inside the container — must match the mounted volume target.
       MEMEX_ROOT: /data
@@ -32,19 +36,28 @@ services:
       MEMEX_API_TOKEN: "${MEMEX_API_TOKEN:-}"
       # Forwarded to mem0 / OpenAI client when the profile uses them.
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      # Image bakes offline models at /opt/memex/models and sets HF_HOME +
-      # *_OFFLINE flags itself. Do NOT override here unless you built with
-      # WITH_LOCAL_MODELS=0 or want to pull a different HF model at runtime:
+      # Image bakes every model at /opt/memex/models and sets HF_HOME +
+      # FASTEMBED_CACHE_PATH + TIKTOKEN_CACHE_DIR + *_OFFLINE flags itself.
+      # Do NOT override here unless you want to fetch a different HF model
+      # at runtime:
       #   HF_HUB_OFFLINE: "0"
       #   TRANSFORMERS_OFFLINE: "0"
       #   HF_HOME: /data/.cache/hf       # then put models on the volume
+      #
+      # First-start default memex.yaml. Used only when ./data/memex.yaml is
+      # absent. Edit a value to point this container at a different LLM /
+      # embedder without rebuilding the image:
+      MEMEX_DEFAULT_USER_ID: "${MEMEX_DEFAULT_USER_ID:-guolin}"
+      MEMEX_DEFAULT_LLM_MODEL: "${MEMEX_DEFAULT_LLM_MODEL:-qwen3:4b}"
+      MEMEX_DEFAULT_LLM_BASE_URL: "${MEMEX_DEFAULT_LLM_BASE_URL:-http://10.242.29.48:11434/v1}"
+      MEMEX_DEFAULT_LLM_API_KEY: "${MEMEX_DEFAULT_LLM_API_KEY:-no-key}"
     volumes:
       # Persistent data: docs/, .cache/chroma, .cache/mem0, .cache/history.
       - ./data:/data
       # Optional: mount your local memex.yaml without touching the rest.
       # - ./data/memex.yaml:/data/memex.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:7963/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

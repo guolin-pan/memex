@@ -3,19 +3,13 @@
     "sessionStart": [
       {
         "name": "memex-profile",
-        "command": "memex mem profile --write /tmp/cursor-memex-profile.md"
+        "command": "$HOME/.cursor/agents/memex-client.py mem profile --write /tmp/cursor-memex-profile.md"
       }
     ],
     "beforeSubmitPrompt": [
       {
         "name": "memex-ctx",
-        "command": "memex ctx \"$CURSOR_USER_PROMPT\" --write /tmp/cursor-memex-ctx.md --budget 2000"
-      }
-    ],
-    "sessionEnd": [
-      {
-        "name": "memex-learn",
-        "command": "memex mem learn --from-cursor-transcript --category learning"
+        "command": "$HOME/.cursor/agents/memex-client.py ctx \"$CURSOR_USER_PROMPT\" --write /tmp/cursor-memex-ctx.md --budget 2000"
       }
     ]
   }

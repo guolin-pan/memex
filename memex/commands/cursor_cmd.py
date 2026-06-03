@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from importlib import resources
 from pathlib import Path
 
@@ -17,6 +18,40 @@ err_console = Console(stderr=True)
 # Custom subagents we ship. Names must match the `name:` frontmatter field
 # and the on-disk filename Cursor expects (filename === name + ".md").
 AGENT_NAMES = ("memex-ask", "memex-archive", "memex-curator")
+
+# Filename of the standalone HTTP client script that ships in templates/.
+# Installed alongside the agents at ~/.cursor/agents/ so hooks and subagents
+# can talk to the memex server without depending on the `memex` package being
+# on PATH (which is fragile because PyPI has an unrelated package named
+# `memex` that `uv tool install memex` happily pulls in).
+CLIENT_SCRIPT_NAME = "memex-client.py"
+
+
+def _default_client_script_path() -> Path:
+    """Where the standalone client script lands by default.
+
+    Always user-scope (~/.cursor/agents/) so a single copy serves both
+    user-scope and project-scope agent installs. Computed at call time so
+    tests can monkeypatch HOME.
+    """
+    return Path.home() / ".cursor" / "agents" / CLIENT_SCRIPT_NAME
+
+
+def _install_client_script(target: Path | None = None, force: bool = False) -> tuple[Path, bool]:
+    """Drop templates/memex-client.py at `target`, chmod +x.
+
+    Returns (path, wrote). `wrote` is False when the file already existed and
+    --force was not set.
+    """
+    dst = target or _default_client_script_path()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and not force:
+        return dst, False
+    dst.write_text(_read_template(CLIENT_SCRIPT_NAME), encoding="utf-8")
+    # 0o755 = rwxr-xr-x. The script has a `#!/usr/bin/env python3` shebang
+    # so it's runnable directly by hooks / agents once executable.
+    os.chmod(dst, 0o755)
+    return dst, True
 
 
 def _read_template(name: str) -> str:
@@ -59,8 +94,17 @@ def install_hooks(
     ),
     merge: bool = typer.Option(True, "--merge/--replace", help="Merge into existing file."),
     force: bool = typer.Option(False, "--force", help="Overwrite without merge if file exists."),
+    install_client: bool = typer.Option(
+        True,
+        "--install-client/--no-install-client",
+        help=(
+            "Also drop the standalone memex-client.py script at "
+            "~/.cursor/agents/. The hooks reference it by absolute path so "
+            "they work without the `memex` package on PATH."
+        ),
+    ),
 ):
-    """Install Cursor lifecycle hooks (sessionStart / beforeSubmitPrompt / sessionEnd)."""
+    """Install Cursor lifecycle hooks (sessionStart / beforeSubmitPrompt)."""
     tpl = json.loads(_read_template("hooks.json"))
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -76,15 +120,25 @@ def install_hooks(
             merged = _merge_hooks(existing, tpl)
             target.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
             console.print(f"[green]✓[/green] merged memex hooks into {target}")
-            return
-        err_console.print(f"[red]error:[/red] {target} exists; pass --force or --merge")
-        raise typer.Exit(2)
+        else:
+            err_console.print(f"[red]error:[/red] {target} exists; pass --force or --merge")
+            raise typer.Exit(2)
+    else:
+        target.write_text(json.dumps(tpl, indent=2) + "\n", encoding="utf-8")
+        console.print(f"[green]✓[/green] wrote {target}")
+        console.print(
+            "  Restart Cursor (or reload the window) for the hooks to take effect.", style="dim"
+        )
 
-    target.write_text(json.dumps(tpl, indent=2) + "\n", encoding="utf-8")
-    console.print(f"[green]✓[/green] wrote {target}")
-    console.print(
-        "  Restart Cursor (or reload the window) for the hooks to take effect.", style="dim"
-    )
+    if install_client:
+        client_path, wrote = _install_client_script()
+        if wrote:
+            console.print(f"[green]✓[/green] installed standalone client at {client_path}")
+        else:
+            console.print(
+                f"  client script already at {client_path}; pass --force to overwrite",
+                style="dim",
+            )
 
 
 @app.command("install-rule")
@@ -93,6 +147,14 @@ def install_rule(
         Path("."), help="The project root in which to place .cursor/rules/memex.mdc."
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite if present."),
+    install_client: bool = typer.Option(
+        True,
+        "--install-client/--no-install-client",
+        help=(
+            "Also drop the standalone memex-client.py script at "
+            "~/.cursor/agents/. The rule tells the main thread to call it."
+        ),
+    ),
 ):
     """Install a project-level Cursor rule that teaches the agent the memex CLI."""
     project_root = project_root.expanduser().resolve()
@@ -103,6 +165,16 @@ def install_rule(
         raise typer.Exit(2)
     target.write_text(_read_template("memex.mdc"), encoding="utf-8")
     console.print(f"[green]✓[/green] wrote {target}")
+
+    if install_client:
+        client_path, wrote = _install_client_script()
+        if wrote:
+            console.print(f"[green]✓[/green] installed standalone client at {client_path}")
+        else:
+            console.print(
+                f"  client script already at {client_path}; pass --force to overwrite",
+                style="dim",
+            )
 
 
 @app.command("print-hooks")
@@ -142,6 +214,14 @@ def install_agents(
         help=f"Install only the named agent(s). Choices: {', '.join(AGENT_NAMES)}.",
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing agent files."),
+    install_client: bool = typer.Option(
+        True,
+        "--install-client/--no-install-client",
+        help=(
+            "Also drop the standalone memex-client.py script at "
+            "~/.cursor/agents/. The agents call it by absolute path."
+        ),
+    ),
 ):
     """Install the memex-ask / memex-archive / memex-curator Cursor subagents."""
     targets = list(only) if only else list(AGENT_NAMES)
@@ -171,12 +251,54 @@ def install_agents(
     for p in skipped:
         console.print(f"[yellow]skip[/yellow] {p} (exists; pass --force to overwrite)")
 
+    if install_client:
+        client_path, client_wrote = _install_client_script(force=force)
+        if client_wrote:
+            console.print(f"[green]✓[/green] installed standalone client at {client_path}")
+        else:
+            console.print(
+                f"  client script already at {client_path}; pass --force to overwrite",
+                style="dim",
+            )
+
     if wrote:
         console.print(
             "\n  Invoke from Cursor chat with [cyan]/memex-ask[/cyan], [cyan]/memex-archive[/cyan], "
             "or [cyan]/memex-curator[/cyan].",
             style="dim",
         )
+
+
+@app.command("install-client")
+def install_client_cmd(
+    target: Path = typer.Option(
+        None,
+        "--target",
+        help=(
+            "Where to write the standalone memex-client.py "
+            "(default: ~/.cursor/agents/memex-client.py)."
+        ),
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite if present."),
+):
+    """Install just the standalone HTTP client script (~/.cursor/agents/memex-client.py).
+
+    The script is stdlib-only and is what Cursor hooks / subagents call to talk
+    to the memex server. Useful when you want to refresh the script without
+    rewriting hooks.json / agent files.
+    """
+    dst, wrote = _install_client_script(target=target, force=force)
+    if wrote:
+        console.print(f"[green]✓[/green] wrote {dst}")
+        console.print(
+            f"  Try: [cyan]{dst} status[/cyan]   (set MEMEX_API_URL first)",
+            style="dim",
+        )
+    else:
+        err_console.print(
+            f"[red]error:[/red] {dst} already exists; pass --force to overwrite"
+        )
+        raise typer.Exit(2)
 
 
 @app.command("list-agents")

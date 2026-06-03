@@ -239,7 +239,7 @@ Pure-vector misses exact-keyword hits ("postgres_max_connections" was renamed an
 | Single uvicorn worker by default | No cross-worker qdrant contention | Limited concurrent requests; fix by running multiple instances behind a load balancer if needed |
 | Shell hooks, not MCP | Simpler, faster, debuggable | LLMs can't tool-discover; we have to maintain a Cursor rule that lists commands |
 | Verbatim `mem add` default | Predictable, fast, doesn't need LLM | If users dump messy text into `mem add` they get one big memory; we documented `--infer` and `mem learn` to compensate |
-| ChromaDB ONNX baked into Docker | Container is offline-ready out of the box | Image is ~1.1 GB; we offer a `WITH_LOCAL_MODELS=0` slim variant |
+| All runtime models baked into Docker | Container is offline-ready out of the box and makes zero network calls on start | Image is ~1.5-2 GB; we no longer ship a slim variant (deliberate trade: size for reliability) |
 | Two memory backends (mem0 + Chroma) | Each one is great at its job | Slightly more complex internals; users only ever see one CLI surface |
 | Frontmatter-id, not path-as-id | Files can be renamed/moved freely | We have to keep the markdown front of every file; can't just point at an existing wiki |
 | ULID, not UUID | Time-ordered, shorter, URL-friendly | Slightly less standard than UUID; tooling around UUID is more common |

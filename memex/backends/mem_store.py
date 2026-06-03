@@ -18,6 +18,50 @@ from memex.core.config import Config
 ALLOWED_CATEGORIES = {"profile", "pref", "project", "decision", "learning", "fact"}
 PROFILE_CATEGORIES = ("profile", "pref")
 
+# `mem ls` / `mem search` tables show only the last 12 characters of each id
+# for compactness; users paste that suffix into `mem rm` / `mem show`. mem0
+# expects the canonical id, so we map suffix → full id when unambiguous.
+_MIN_SUFFIX_LEN = 8
+
+_NOT_FOUND_HINT = (
+    "Run `memex mem ls --json` (or `memex client mem ls --json` against a "
+    "remote server) to see full ids."
+)
+
+
+def resolve_memory_ref(ref: str, memory_ids: list[str]) -> str:
+    """Resolve a user-supplied memory reference to the canonical id mem0 stores.
+
+    Accepts:
+      - the full id (exact match against ``memory_ids``); or
+      - a unique suffix of at least :data:`_MIN_SUFFIX_LEN` characters in
+        the hex/dash form printed by ``mem ls`` (e.g. ``c57ed1036c5a``).
+
+    Raises ``KeyError`` when no candidate matches and ``ValueError`` when a
+    suffix matches more than one stored id.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        raise KeyError(f"Empty memory id. {_NOT_FOUND_HINT}")
+    if ref in memory_ids:
+        return ref
+    if len(ref) < _MIN_SUFFIX_LEN:
+        raise KeyError(f"Memory with id {ref!r} not found. {_NOT_FOUND_HINT}")
+    ref_norm = ref.replace("-", "")
+    candidates = [
+        mid
+        for mid in memory_ids
+        if mid.endswith(ref) or mid.replace("-", "").endswith(ref_norm)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise KeyError(f"Memory with id {ref!r} not found. {_NOT_FOUND_HINT}")
+    raise ValueError(
+        f"Ambiguous memory id {ref!r}: {len(candidates)} matches. "
+        "Use a longer suffix or the full id from `mem ls --json`."
+    )
+
 
 @dataclass
 class MemoryItem:
@@ -250,17 +294,64 @@ class MemStore:
         self.memory.update(memory_id=mem_id, data=text)
 
     def delete(self, mem_id: str) -> None:
-        self.memory.delete(memory_id=mem_id)
+        # Fast path: if `mem_id` is already the canonical id mem0 stores, let
+        # mem0 handle it directly. We only pay the O(N) cost of listing every
+        # memory when the fast path fails, i.e. the user pasted a short
+        # suffix from `mem ls` and we need to resolve it.
+        if self._try_delete_direct(mem_id):
+            return
+        ids = self._all_memory_ids()
+        canon = resolve_memory_ref(mem_id, ids)
+        self.memory.delete(memory_id=canon)
 
     def delete_all(self) -> None:
         self.memory.delete_all(user_id=self.cfg.user_id)
 
     def get(self, mem_id: str) -> MemoryItem | None:
+        # Fast path: try the canonical lookup first. Only fall back to the
+        # suffix-resolution path (which costs an O(N) listing) when mem0
+        # returns nothing.
+        obj = self._try_get_direct(mem_id)
+        if obj is not None:
+            return obj
+        try:
+            ids = self._all_memory_ids()
+            canon = resolve_memory_ref(mem_id, ids)
+        except KeyError:
+            return None
+        # ValueError (ambiguous suffix) deliberately propagates: the API and
+        # CLI layers map it to 409 Conflict / exit-1 with an actionable hint.
+        obj = self._try_get_direct(canon)
+        return obj
+
+    def _all_memory_ids(self) -> list[str]:
+        return [m.id for m in self.list(category=None)]
+
+    def _try_delete_direct(self, mem_id: str) -> bool:
+        """Best-effort canonical delete. Returns True on success.
+
+        mem0's `Memory.delete(memory_id=X)` raises
+        ``ValueError("Memory with id X not found")`` when the id is unknown.
+        We swallow only that case and let the caller fall back to suffix
+        resolution. Any other exception (qdrant down, malformed config,
+        etc.) propagates — the fallback path would just hit the same
+        failure and obscure the real cause.
+        """
+        try:
+            self.memory.delete(memory_id=mem_id)
+            return True
+        except ValueError:
+            return False
+
+    def _try_get_direct(self, mem_id: str) -> MemoryItem | None:
+        # mem0.get returns None (no raise) for unknown ids; broad except
+        # only matters for transient backend errors, in which case returning
+        # None lets the resolution path retry against the listing.
         try:
             obj = self.memory.get(memory_id=mem_id)
         except Exception:
             return None
-        if not obj:
+        if not obj or not isinstance(obj, dict):
             return None
         return _to_item(obj)
 

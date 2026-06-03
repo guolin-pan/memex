@@ -153,6 +153,22 @@ verify() {
   ok "$v  (binary: $bin)"
 }
 
+# PyTorch 2.12+ imports torch._dynamo, whose stdlib polyfills expect
+# sys.get_int_max_str_digits (added in CPython 3.11.0 final). Pre-release
+# 3.11.0rc1 and similar interpreters crash sentence-transformers at import.
+require_stdlib_for_torch_stack() {
+  local py="$1"
+  if ! "$py" -c "import sys; sys.exit(0 if getattr(sys, 'get_int_max_str_digits', None) else 1)" 2>/dev/null; then
+    err "Python at $py cannot run the default torch/transformers stack (missing sys.get_int_max_str_digits)."
+    echo "  Typical cause: a pre-release CPython (e.g. 3.11.0rc1). Install a final release, then recreate .venv." >&2
+    echo "  Example (uv-managed CPython):" >&2
+    echo "    uv python install 3.11" >&2
+    echo "    rm -rf \"$VENV_ABS\"" >&2
+    echo "    bash \"$PROJECT_ROOT/scripts/install.sh\" --uv --python 3.11" >&2
+    exit 1
+  fi
+}
+
 # ----- install --------------------------------------------------------------
 case "$INSTALLER" in
   uv)
@@ -163,9 +179,12 @@ case "$INSTALLER" in
       if [[ -n "$PYTHON_VERSION" ]]; then
         uv venv --python "$PYTHON_VERSION" "$VENV_ABS" >/dev/null
       else
-        uv venv "$VENV_ABS" >/dev/null
+        # Default to CPython 3.11 so we avoid broken pre-release system Pythons
+        # and match the project's recommended version.
+        uv venv --python 3.11 "$VENV_ABS" >/dev/null
       fi
     fi
+    require_stdlib_for_torch_stack "$VENV_ABS/bin/python"
     log "installing editable + extras: $EXTRAS_SUFFIX"
     VIRTUAL_ENV="$VENV_ABS" uv pip install -e "$EXTRAS_SUFFIX" ${QUIET:+--quiet}
     BIN="$VENV_ABS/bin/memex"
@@ -185,12 +204,13 @@ case "$INSTALLER" in
       for cand in python3.13 python3.12 python3.11 python3; do
         if command -v "$cand" >/dev/null 2>&1; then
           if "$cand" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" \
-              && "$cand" -c "import ensurepip" 2>/dev/null; then
+              && "$cand" -c "import ensurepip" 2>/dev/null \
+              && "$cand" -c "import sys; sys.exit(0 if getattr(sys, 'get_int_max_str_digits', None) else 1)" 2>/dev/null; then
             echo "$cand"; return
           fi
         fi
       done
-      err "no working python>=3.11 found on PATH (3.10 venvs commonly lack ensurepip)"
+      err "no working python>=3.10 found on PATH with ensurepip and torch-compatible stdlib (need sys.get_int_max_str_digits — avoid CPython pre-releases like 3.11.0rc1)"
       exit 2
     }
     PY=$(pick_python)
@@ -199,6 +219,7 @@ case "$INSTALLER" in
     if [[ ! -d "$VENV_ABS" ]]; then
       "$PY" -m venv "$VENV_ABS"
     fi
+    require_stdlib_for_torch_stack "$VENV_ABS/bin/python"
     note "upgrading pip + wheel"
     "$VENV_ABS/bin/pip" install --upgrade pip wheel ${QUIET:+--quiet} >/dev/null
     log "installing editable + extras: $EXTRAS_SUFFIX"
@@ -243,6 +264,8 @@ if [[ $QUIET -eq 0 ]]; then
   cat <<EOF
 
 ${B}next steps${X}
+  Note: if \`uv tool install memex\` is also on your PATH, bare \`memex\` may hit ~/.local/bin
+  instead of this venv. Use \`source ${VENV_ABS}/bin/activate\` or \`uv run memex\` from the repo.
   1. (optional) activate the venv:
        source ${VENV_ABS}/bin/activate
   2. initialise a memex root (defaults to ~/memex):

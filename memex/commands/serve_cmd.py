@@ -13,7 +13,7 @@ console = Console()
 def serve(
     ctx: typer.Context,
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Bind address."),
-    port: int = typer.Option(8000, "--port", "-p", help="Bind port."),
+    port: int = typer.Option(7963, "--port", "-p", help="Bind port."),
     reload: bool = typer.Option(
         False, "--reload", help="Auto-reload on code change (development only)."
     ),

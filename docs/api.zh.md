@@ -5,7 +5,7 @@
 ## 启动
 
 ```bash
-memex serve --host 0.0.0.0 --port 8000
+memex serve --host 0.0.0.0 --port 7963
 ```
 
 OpenAPI / Swagger UI 在 `/docs`；原始 schema 在 `/openapi.json`。
@@ -24,7 +24,7 @@ MEMEX_API_TOKEN=$(openssl rand -hex 32) memex serve
 
 ```
 +--------------------+        HTTP/1.1         +---------------------------+
-|  调用方             | ------- 请求 --------> |  uvicorn :8000            |
+|  调用方             | ------- 请求 --------> |  uvicorn :7963            |
 |  (memex client、   |                         |  FastAPI app              |
 |   curl、httpx、    | <----- 响应 ---------- |  build_app(root) 构建     |
 |   任何 HTTP 客户端) |                         +-------------+-------------+
@@ -87,10 +87,10 @@ MEMEX_API_TOKEN=$(openssl rand -hex 32) memex serve
 ### Healthz + 横幅
 
 ```bash
-curl -fsS http://localhost:8000/healthz
+curl -fsS http://localhost:7963/healthz
 # -> {"ok":true}
 
-curl -fsS http://localhost:8000/
+curl -fsS http://localhost:7963/
 # -> {"name":"memex","version":"0.1.0","root":"/data","docs":"/docs",
 #     "openapi":"/openapi.json","auth_required":true}
 ```
@@ -100,7 +100,7 @@ curl -fsS http://localhost:8000/
 ```bash
 TOKEN=...                       # 来自 $MEMEX_API_TOKEN
 
-curl -fsS http://localhost:8000/status -H "Authorization: Bearer $TOKEN"
+curl -fsS http://localhost:7963/status -H "Authorization: Bearer $TOKEN"
 # -> { "root":"/data", "user_id":"alice",
 #      "docs_count": 23, "chunks_count": 142,
 #      "embedder": "chroma-default:all-MiniLM-L6-v2",
@@ -112,7 +112,7 @@ curl -fsS http://localhost:8000/status -H "Authorization: Bearer $TOKEN"
 ### 加文档
 
 ```bash
-curl -fsS -X POST http://localhost:8000/doc/add \
+curl -fsS -X POST http://localhost:7963/doc/add \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -131,7 +131,7 @@ curl -fsS -X POST http://localhost:8000/doc/add \
 ### 搜索
 
 ```bash
-curl -fsS -G http://localhost:8000/doc/search \
+curl -fsS -G http://localhost:7963/doc/search \
   -H "Authorization: Bearer $TOKEN" \
   --data-urlencode 'q=postgres analytic memory' \
   --data-urlencode 'k=3' \
@@ -162,7 +162,7 @@ curl -fsS -G http://localhost:8000/doc/search \
 ### 构建上下文块（Cursor hooks 调的就是它）
 
 ```bash
-curl -fsS -X POST http://localhost:8000/ctx \
+curl -fsS -X POST http://localhost:7963/ctx \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -183,7 +183,7 @@ curl -fsS -X POST http://localhost:8000/ctx \
 ### 加记忆（逐字）
 
 ```bash
-curl -fsS -X POST http://localhost:8000/mem/add \
+curl -fsS -X POST http://localhost:7963/mem/add \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -198,7 +198,7 @@ curl -fsS -X POST http://localhost:8000/mem/add \
 ### 渲染 profile 块
 
 ```bash
-curl -fsS http://localhost:8000/mem/profile -H "Authorization: Bearer $TOKEN"
+curl -fsS http://localhost:7963/mem/profile -H "Authorization: Bearer $TOKEN"
 # -> { "block": "## About the user\n\n- (profile) ...\n- (pref) ...\n",
 #      "count": 7 }
 ```
@@ -206,7 +206,7 @@ curl -fsS http://localhost:8000/mem/profile -H "Authorization: Bearer $TOKEN"
 ### 重新索引（管理操作）
 
 ```bash
-curl -fsS -X POST 'http://localhost:8000/doc/reindex?all=true' -H "Authorization: Bearer $TOKEN"
+curl -fsS -X POST 'http://localhost:7963/doc/reindex?all=true' -H "Authorization: Bearer $TOKEN"
 # -> { "added": [...], "updated": [...], "skipped": [...], "deleted": [] }
 ```
 

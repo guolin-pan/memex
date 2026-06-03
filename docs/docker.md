@@ -7,7 +7,7 @@ This page is the short, opinionated version. For the full operations runbook (mu
 ```
 +-------------------+         +-------------------------------------------+
 |  caller (LLM,     |  HTTP   |  memex container                          |
-|  Cursor agent,    | ------> |  uvicorn :8000                            |
+|  Cursor agent,    | ------> |  uvicorn :7963                            |
 |  CI bot, curl)    |         |                                           |
 +-------------------+         |  /opt/memex/models/   <-- BAKED at build  |
                               |     chroma/onnx_models/...                |
@@ -37,46 +37,45 @@ cp .env.example .env                          # set MEMEX_API_TOKEN, OPENAI_API_
 docker compose build                          # ~5-10 min first time
 ```
 
-### Two build variants
+### What's baked into the image
 
-```
-+----------------------------+----------+----------------------+--------------------------------+
-| variant                    | size     | runtime network?     | when                           |
-+----------------------------+----------+----------------------+--------------------------------+
-| WITH_LOCAL_MODELS=1        | ~1.1 GB  | none                 | self-hosted, offline, private  |
-| (default)                  |          |                      | LLM endpoint, air-gapped       |
-+----------------------------+----------+----------------------+--------------------------------+
-| WITH_LOCAL_MODELS=0        | ~500 MB  | yes (downloads ONNX  | only the openai cloud profile, |
-|                            |          | + HF on first use)   | size-constrained                |
-+----------------------------+----------+----------------------+--------------------------------+
-```
+There is a **single variant** by design — every model the runtime might
+load is included, so a started container never reaches out to the network
+for model files. Image size (~1.5-2 GB) is the explicit, accepted cost.
 
-What gets baked when `WITH_LOCAL_MODELS=1`:
+| Bundle | Used by |
+|---|---|
+| CPU-only PyTorch (from PyTorch's CPU wheel index)                                            | sentence-transformers, mem0 HF embedder |
+| sentence-transformers package                                                                  | mem0's HuggingFace embedder |
+| ChromaDB ONNX `all-MiniLM-L6-v2` at `/opt/memex/models/chroma/onnx_models/`                     | wiki vector layer when `embedder.provider: chroma-default` |
+| HF `sentence-transformers/all-MiniLM-L6-v2` (full snapshot) at `/opt/memex/models/hf/`         | mem0's HuggingFace embedder backend |
+| fastembed `Qdrant/bm25` at `/opt/memex/models/fastembed/`                                       | mem0 / qdrant BM25 keyword search |
+| spaCy `en_core_web_sm` (installed into `/opt/venv` via `python -m spacy download`)              | mem0 lemmatization + entity extraction (`mem0ai[nlp]`) |
+| tiktoken `cl100k_base` BPE blob at `/opt/memex/models/tiktoken/`                                | memex chunking / token counting |
 
-| Bundle | Size | Used by |
-|---|---|---|
-| CPU-only PyTorch (from PyTorch's CPU wheel index) | ~180 MB | sentence-transformers |
-| sentence-transformers package | ~10 MB | mem0's HuggingFace embedder |
-| ChromaDB ONNX `all-MiniLM-L6-v2` | ~165 MB | wiki vector layer when `embedder.provider: chroma-default` |
-| HF `sentence-transformers/all-MiniLM-L6-v2` (safetensors only, redundant PyTorch/TF/Rust/ONNX/OpenVINO formats skipped) | ~90 MB | mem0's HF embedder |
+### Incremental builds
 
-To build the slim variant:
+The Dockerfile is split so a **routine source edit rebuilds in ~40 s, not 25 min**.
 
-```bash
-WITH_LOCAL_MODELS=0 docker compose build
-# or, with plain docker:
-docker build --build-arg WITH_LOCAL_MODELS=0 -t memex:slim .
-```
+| Stage | Job                                            | Cache key                | When it re-runs       |
+|-------|------------------------------------------------|--------------------------|------------------------|
+| A     | install every Python dep (using a stub memex package so source edits don't bust this layer) | `pyproject.toml`, `README.md` | dep changes            |
+| B     | pre-warm every model (HF MiniLM, spaCy, ChromaDB ONNX, fastembed, tiktoken) | same as A                | dep changes            |
+| C     | `COPY memex/` + `templates/`, `pip install --no-deps .` | `memex/`, `templates/`   | every source edit (~5s) |
+
+BuildKit cache mounts also keep pip's `~/.cache/pip` and apt's `/var/cache/apt`
+alive across builds, so even a full rebuild after `pyproject.toml` changes
+skips the slow downloads.
 
 ## Run
 
 ```bash
 docker compose up -d
-curl -fsS http://localhost:8000/healthz       # liveness
-open http://localhost:8000/docs               # OpenAPI / Swagger UI
+curl -fsS http://localhost:7963/healthz       # liveness
+open http://localhost:7963/docs               # OpenAPI / Swagger UI
 ```
 
-Default exposed port is `8000`. Change with `MEMEX_PORT` in `.env`:
+Default exposed port is `7963`. Change with `MEMEX_PORT` in `.env`:
 
 ```bash
 MEMEX_PORT=18000 docker compose up -d
@@ -148,8 +147,7 @@ One script. Builds, model-introspects, boots, runs the full API surface, restart
 
 ```bash
 bash scripts/docker-build-test.sh                       # full build + tests
-FAST=1 bash scripts/docker-build-test.sh               # skip rebuild if memex:e2e exists
-WITH_LOCAL_MODELS=0 bash scripts/docker-build-test.sh   # build slim variant
+FAST=1 bash scripts/docker-build-test.sh                # skip rebuild if memex:e2e exists
 ```
 
 Output ends with a `PASS / FAIL` count. See the source for the full checklist.
@@ -189,7 +187,7 @@ If you keep your KB in Docker (shared between dev box and laptop, or behind a to
 pipx install <path-to-memex-repo>          # or `pip install -e .` from the repo
 
 # point at the deployment
-export MEMEX_API_URL=http://<host>:8000
+export MEMEX_API_URL=http://<host>:7963
 export MEMEX_API_TOKEN=...                 # if you set one
 
 # verify
@@ -232,4 +230,4 @@ llm:
 See the table at the bottom of [`../DOCKER.md`](../DOCKER.md). The two most common gotchas:
 
 - **Permission denied on /data** — the in-container user is uid 1000. If your host directory is owned by a different uid, run `chown -R 1000:1000 ./data` once, or build the image with a different uid via `--build-arg`.
-- **`OSError: ... offline mode` for a HF model** — you built with `WITH_LOCAL_MODELS=0`. Either rebuild with `=1`, or override at runtime with `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0` (first request will then go fetch over the network).
+- **`OSError: ... offline mode` for a HF model** — the model isn't the one baked into the image. Either extend the Dockerfile's pre-warm step to also snapshot that repo, or override at runtime with `-e HF_HUB_OFFLINE=0 -e TRANSFORMERS_OFFLINE=0` (first request will then go fetch over the network).
