@@ -24,6 +24,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Forward the caller's proxy env into the build. Without this,
+      # `docker compose build` on a host behind a corporate proxy fails
+      # at `apt-get update` ("E: Unable to locate package git") because
+      # the build container has no route to deb.debian.org. The
+      # Dockerfile declares matching ARGs and BuildKit auto-exports the
+      # HTTP_PROXY family to every RUN step, so apt/pip/curl pick them
+      # up. Leave the env vars unset on a host with direct internet and
+      # these resolve to empty strings (== no proxy).
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+        http_proxy: ${http_proxy:-}
+        https_proxy: ${https_proxy:-}
+        no_proxy: ${no_proxy:-localhost,127.0.0.1}
     image: memex:latest
     container_name: memex
     restart: unless-stopped
