@@ -124,7 +124,14 @@ def rm(
         store.delete_all()
         console.print("[green]✓[/green] wiped all memories")
     else:
-        store.delete(mem_id)
+        # KeyError = no such memory (or short suffix didn't match anything).
+        # ValueError = ambiguous suffix matches multiple memories.
+        # Either way it's a user-facing error, not a bug; exit 1 with a hint.
+        try:
+            store.delete(mem_id)
+        except (KeyError, ValueError) as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
         console.print(f"[green]✓[/green] deleted {mem_id}")
 
 
